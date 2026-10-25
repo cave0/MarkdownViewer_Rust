@@ -360,6 +360,15 @@ mod tests {
     }
 
     #[test]
+    fn embedded_app_js_serializes_mermaid_renders() {
+        // mermaid.run() ids are timestamp-based; concurrent runs collided and drew diagrams into each other.
+        let (_d, s) = setup();
+        let js = String::from_utf8(s.serve("/_a/app.js").body.to_vec()).unwrap();
+        assert!(js.contains("mermaidQueue"));
+        assert!(js.contains("decorateDiagram"));
+    }
+
+    #[test]
     fn json_str_escapes_quotes_backslashes_and_controls() {
         assert_eq!(json_str("we \"q\".md"), "\"we \\\"q\\\".md\"");
         assert_eq!(json_str("a\\b"), "\"a\\\\b\"");
