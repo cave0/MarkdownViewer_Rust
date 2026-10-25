@@ -13,7 +13,7 @@ percent-encoding = "2"
 
 [target.'cfg(windows)'.dependencies]
 wry = "0.53"
-tao = "0.34"
+tao = "0.37"
 open = "5"
 rfd = { version = "0.15", default-features = false }
 
