@@ -93,7 +93,7 @@ jobs:
           name: mdview-windows-x64
       - name: Checksum
         run: sha256sum mdview.exe > mdview.exe.sha256
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             mdview.exe
