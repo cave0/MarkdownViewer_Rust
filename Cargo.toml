@@ -15,7 +15,7 @@ percent-encoding = "2"
 wry = "0.53"
 tao = "0.34"
 open = "5"
-rfd = { version = "0.15", default-features = false }
+rfd = { version = "0.17", default-features = false }
 
 [profile.release]
 opt-level = 3
