@@ -344,11 +344,25 @@ mod tests {
     #[test]
     fn lists_markdown_files_as_json() {
         let (d, s) = setup();
+        // '"' is not a legal file-name character on Windows, so the quoted name is created on Unix only.
+        #[cfg(unix)]
         fs::write(d.join("sub/we \"q\".md"), "x").unwrap();
+        #[cfg(not(unix))]
+        fs::write(d.join("sub/we q.md"), "x").unwrap();
         let j = String::from_utf8(s.serve("/_files").body.to_vec()).unwrap();
         assert!(j.starts_with('[') && j.ends_with(']'));
         assert!(j.contains("\"p\":\"/a.md\"") && j.contains("\"n\":\"sub/b.md\""), "{j}");
+        #[cfg(unix)]
         assert!(j.contains("we \\\"q\\\".md"), "{j}");
+        #[cfg(not(unix))]
+        assert!(j.contains("we q.md"), "{j}");
         assert!(!j.contains("secret.txt") && !j.contains("pic.png"));
+    }
+
+    #[test]
+    fn json_str_escapes_quotes_backslashes_and_controls() {
+        assert_eq!(json_str("we \"q\".md"), "\"we \\\"q\\\".md\"");
+        assert_eq!(json_str("a\\b"), "\"a\\\\b\"");
+        assert_eq!(json_str("a\nb"), "\"a\\u000ab\"");
     }
 }
