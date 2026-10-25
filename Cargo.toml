@@ -12,7 +12,7 @@ pulldown-cmark-escape = "0.11"
 percent-encoding = "2"
 
 [target.'cfg(windows)'.dependencies]
-wry = "0.53"
+wry = "0.57"
 tao = "0.34"
 open = "5"
 rfd = { version = "0.15", default-features = false }
