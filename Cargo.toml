@@ -1,0 +1,25 @@
+[package]
+name = "mdview"
+version = "3.0.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Fast dark-mode Markdown viewer (WebView2) with KaTeX, Mermaid and live reload"
+build = "build.rs"
+
+[dependencies]
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+pulldown-cmark-escape = "0.11"
+percent-encoding = "2"
+
+[target.'cfg(windows)'.dependencies]
+wry = "0.53"
+tao = "0.34"
+open = "5"
+rfd = { version = "0.15", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+debug = false
