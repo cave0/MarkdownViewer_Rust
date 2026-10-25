@@ -1,0 +1,10 @@
+{
+  "name": "mdview-ui-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node run.mjs" },
+  "devDependencies": {
+    "marked": "^18.0.0",
+    "playwright": "^1.50.0"
+  }
+}
