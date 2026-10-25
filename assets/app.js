@@ -57,7 +57,31 @@
         store.set('mdview.bgTheme', on ? 'black' : 'dark');
     }
     setBlack(body.classList.contains('theme-black'));
+    // Light theme (Ctrl+Shift+L): colors come from CSS variables; Mermaid picks its theme at load, so reload.
+    function isLight() { return body.classList.contains('theme-light'); }
+    function syncLight() {
+        var m = document.querySelector('meta[name=color-scheme]');
+        if (m) m.setAttribute('content', isLight() ? 'light' : 'dark');
+        var b = $('light-toggle-btn');
+        if (b) { b.textContent = isLight() ? '\u263E' : '\u2600'; b.title = (isLight() ? 'Dark theme' : 'Light theme') + ' (Ctrl+Shift+L)'; }
+    }
+    function setLight(on, reload) {
+        body.classList.toggle('theme-light', on);
+        store.set('mdview.light', on ? '1' : '0');
+        syncLight();
+        if (reload && document.querySelector('pre.mermaid') && window.__mdReload) window.__mdReload();
+    }
+    (function () {
+        var b = document.createElement('button');
+        b.id = 'light-toggle-btn'; b.type = 'button'; b.setAttribute('aria-label', 'Toggle light theme');
+        body.appendChild(b);
+        syncLight();
+    })();
     function on(id, fn) { var b = $(id); if (b) b.addEventListener('click', fn); }
+    on('light-toggle-btn', function () { setLight(!isLight(), true); });
+    document.addEventListener('keydown', function (e) {
+        if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') { e.preventDefault(); setLight(!isLight(), true); }
+    });
     on('theme-toggle-btn', function () { setNight(!body.classList.contains('night-mode')); });
     on('bgtheme-toggle-btn', function () { setBlack(!body.classList.contains('theme-black')); });
     on('fullscreen-toggle-btn', function () { ipc('fullscreen'); });
@@ -156,19 +180,84 @@
         var tex = el.textContent
             .replace(/\\(begin|end)\{eqnarray(\*?)\}/g, '\\$1{align$2}')
             .replace(/\\(begin|end)\{multline(\*?)\}/g, '\\$1{gather$2}');
+        var raw = el.textContent;
         katex.render(tex, el, {
             displayMode: el.classList.contains('math-display'), throwOnError: false, trust: false, strict: 'ignore', output: 'htmlAndMathml'
         });
+        if (el.classList.contains('math-display')) {
+            el.__tex = raw.trim();
+            var cb = document.createElement('button');
+            cb.type = 'button'; cb.className = 'tex-copy'; cb.title = 'Copy LaTeX source'; cb.textContent = 'TeX';
+            el.appendChild(cb);
+        }
     });
     var mermaidQueue = Promise.resolve();
+    // Very wide diagrams keep a readable scale (75%, max 2400px) and scroll sideways instead of shrinking to fit.
+    function decorateDiagram(el, src) {
+        var svg = el.querySelector('svg');
+        if (!svg || el.querySelector('.dgm-tools')) return;
+        el.__src = src;
+        var vb = svg.viewBox && svg.viewBox.baseVal;
+        // only diagrams that would shrink below ~60% get the sideways-scroll treatment; others still fit the page
+        if (vb && vb.width && el.clientWidth < vb.width * 0.6) svg.style.minWidth = Math.min(Math.round(vb.width * 0.75), 2400) + 'px';
+        var tools = document.createElement('div');
+        tools.className = 'dgm-tools';
+        [['zoom', '\u2922', 'Open full size'], ['svg', 'SVG', 'Copy as SVG'], ['src', 'Mermaid', 'Copy Mermaid source']].forEach(function (d) {
+            var b = document.createElement('button');
+            b.type = 'button'; b.setAttribute('data-act', d[0]); b.title = d[2]; b.textContent = d[1];
+            tools.appendChild(b);
+        });
+        el.appendChild(tools);
+    }
+    function svgText(svg) {
+        var c = svg.cloneNode(true), vb = svg.viewBox.baseVal;
+        c.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        c.removeAttribute('style');
+        c.setAttribute('width', Math.round(vb.width)); c.setAttribute('height', Math.round(vb.height));
+        return new XMLSerializer().serializeToString(c);
+    }
+    function openDiagram(el) {
+        var svg = el.querySelector('svg');
+        if (!svg) return;
+        var vb = svg.viewBox.baseVal, c = svg.cloneNode(true);
+        var w = Math.max(Math.round(vb.width * 1.1), Math.min(Math.round(window.innerWidth * 0.94), Math.round(vb.width * 1.8)));
+        c.removeAttribute('style'); c.setAttribute('width', w); c.setAttribute('height', Math.round(w * vb.height / vb.width));
+        var ov = document.createElement('div');
+        ov.className = 'dgm-overlay';
+        var x = document.createElement('button');
+        x.type = 'button'; x.className = 'dgm-close'; x.title = 'Close (Esc)'; x.textContent = '\u2715';
+        ov.appendChild(x); ov.appendChild(c);
+        function close() { ov.remove(); document.removeEventListener('keydown', esc, true); }
+        function esc(ev) { if (ev.key === 'Escape') { ev.stopPropagation(); close(); } }
+        ov.addEventListener('click', function (ev) { if (ev.target === ov || ev.target === x) close(); });
+        document.addEventListener('keydown', esc, true);
+        body.appendChild(ov);
+    }
+    document.addEventListener('click', function (e) {
+        var t = e.target;
+        if (!t || !t.closest) return;
+        var b = t.closest('.dgm-tools button');
+        if (b) {
+            var el = b.closest('pre.mermaid'), act = b.getAttribute('data-act'), label = b.textContent;
+            if (act === 'zoom') openDiagram(el);
+            else if (act === 'svg') copyText(svgText(el.querySelector('svg')), function (ok) { flash(b, ok, label); });
+            else copyText(el.__src || '', function (ok) { flash(b, ok, label); });
+            return;
+        }
+        var tb = t.closest('.tex-copy');
+        if (tb) { var m = tb.closest('.math-display'); copyText((m && m.__tex) || '', function (ok) { flash(tb, ok, 'TeX'); }); return; }
+        var sv = t.closest('pre.mermaid svg');
+        if (sv && !String(window.getSelection()).length) openDiagram(sv.closest('pre.mermaid'));
+    });
     lazy('pre.mermaid', '/_a/mermaid.min.js', function () {
-        mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict', fontFamily: 'Segoe UI, Arial, sans-serif' });
+        mermaid.initialize({ startOnLoad: false, theme: isLight() ? 'default' : 'dark', securityLevel: 'strict', fontFamily: 'Segoe UI, Arial, sans-serif' });
     }, function (el) {
         // One render at a time: mermaid.run() names each svg "mermaid-<Date.now()>", so two runs started in the
         // same millisecond (several diagrams entering view together) share an id and draw into each other.
+        var src = el.textContent;
         mermaidQueue = mermaidQueue.then(function () {
             return mermaid.run({ nodes: [el], suppressErrors: true });
-        }).catch(function () {});
+        }).then(function () { decorateDiagram(el, src); }).catch(function () {});
     });
     window.addEventListener('beforeprint', function () { pending.forEach(function (f) { f(); }); });
 
@@ -348,6 +437,82 @@
     fb[0].onclick = function () { find(true); }; fb[1].onclick = function () { find(false); }; fb[2].onclick = closeFind;
     onKey(function (e) { return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f'; }, openFind);
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeFind(); });
+
+    // ---- :emoji: shortcodes and ==highlight== in body text (never inside code, links, math or diagrams) ----
+    (function () {
+        var E = { smile: '\u{1F604}', grin: '\u{1F601}', joy: '\u{1F602}', wink: '\u{1F609}', sweat_smile: '\u{1F605}', thinking: '\u{1F914}',
+            sob: '\u{1F62D}', cry: '\u{1F622}', angry: '\u{1F620}', hugs: '\u{1F917}', eyes: '\u{1F440}', skull: '\u{1F480}', ghost: '\u{1F47B}',
+            robot: '\u{1F916}', brain: '\u{1F9E0}', heart: '\u2764\uFE0F', broken_heart: '\u{1F494}', star: '\u2B50', sparkles: '\u2728', zap: '\u26A1',
+            fire: '\u{1F525}', tada: '\u{1F389}', rocket: '\u{1F680}', bulb: '\u{1F4A1}', warning: '\u26A0\uFE0F', no_entry: '\u26D4', stop_sign: '\u{1F6D1}',
+            construction: '\u{1F6A7}', white_check_mark: '\u2705', heavy_check_mark: '\u2714\uFE0F', x: '\u274C', question: '\u2753', exclamation: '\u2757',
+            information_source: '\u2139\uFE0F', '+1': '\u{1F44D}', thumbsup: '\u{1F44D}', '-1': '\u{1F44E}', thumbsdown: '\u{1F44E}', ok_hand: '\u{1F44C}',
+            clap: '\u{1F44F}', pray: '\u{1F64F}', muscle: '\u{1F4AA}', wave: '\u{1F44B}', raised_hands: '\u{1F64C}', point_right: '\u{1F449}',
+            arrow_right: '\u27A1\uFE0F', arrow_left: '\u2B05\uFE0F', arrow_up: '\u2B06\uFE0F', arrow_down: '\u2B07\uFE0F', memo: '\u{1F4DD}',
+            book: '\u{1F4D6}', books: '\u{1F4DA}', bookmark: '\u{1F516}', link: '\u{1F517}', pushpin: '\u{1F4CC}', mag: '\u{1F50D}', lock: '\u{1F512}',
+            key: '\u{1F511}', wrench: '\u{1F527}', hammer: '\u{1F528}', bug: '\u{1F41B}', calendar: '\u{1F4C5}', hourglass: '\u231B', coffee: '\u2615',
+            chart_with_upwards_trend: '\u{1F4C8}', chart_with_downwards_trend: '\u{1F4C9}', sunny: '\u2600\uFE0F', cloud: '\u2601\uFE0F',
+            snowflake: '\u2744\uFE0F', seedling: '\u{1F331}', earth_africa: '\u{1F30D}', speech_balloon: '\u{1F4AC}', balance_scale: '\u2696\uFE0F',
+            microscope: '\u{1F52C}', telescope: '\u{1F52D}', dna: '\u{1F9EC}', infinity: '\u267E\uFE0F', hourglass_flowing_sand: '\u23F3' };
+        var re = /:([a-z0-9_+-]+):|==([^=\s](?:[^=]*[^=\s])?)==/g;
+        var skip = 'pre, code, kbd, script, style, textarea, svg, a, mark, .math-inline, .math-display, .mermaid, .katex, .raw-source-view';
+        var root = document.querySelector('.markdown-container');
+        if (!root) return;
+        var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), hits = [], n;
+        while ((n = w.nextNode())) {
+            var v = n.nodeValue;
+            if ((v.indexOf(':') < 0 && v.indexOf('==') < 0) || !n.parentElement || n.parentElement.closest(skip)) continue;
+            hits.push(n);
+        }
+        hits.forEach(function (node) {
+            var text = node.nodeValue, last = 0, m, frag = null;
+            re.lastIndex = 0;
+            while ((m = re.exec(text))) {
+                var rep = null;
+                if (m[1] !== undefined) { if (Object.prototype.hasOwnProperty.call(E, m[1])) rep = document.createTextNode(E[m[1]]); }
+                else { rep = document.createElement('mark'); rep.textContent = m[2]; }
+                if (!rep) continue;
+                if (!frag) frag = document.createDocumentFragment();
+                frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+                frag.appendChild(rep);
+                last = m.index + m[0].length;
+            }
+            if (frag) { frag.appendChild(document.createTextNode(text.slice(last))); node.parentNode.replaceChild(frag, node); }
+        });
+    })();
+
+    // ---- remember where you stopped reading in each file (anchored to a heading, not a pixel offset, because
+    //      lazily rendered diagrams change the heights above you) ---------------------------------------------
+    (function () {
+        var KEY = 'mdview.pos', path = location.pathname, moved = false, timer = 0;
+        function load() { try { return JSON.parse(store.get(KEY) || '{}') || {}; } catch (e) { return {}; } }
+        var heads = Array.prototype.slice.call(document.querySelectorAll('.markdown-container h1[id], .markdown-container h2[id], .markdown-container h3[id], .markdown-container h4[id]'));
+        function topOf(el) { return el.getBoundingClientRect().top - (host ? host.getBoundingClientRect().top : 0); }
+        function save() {
+            timer = 0;
+            if (!heads.length) return;
+            var lo = 0, hi = heads.length - 1, best = -1;
+            while (lo <= hi) { var mid = (lo + hi) >> 1; if (topOf(heads[mid]) <= 40) { best = mid; lo = mid + 1; } else hi = mid - 1; }
+            var map = load();
+            if (best < 0) delete map[path]; else map[path] = [heads[best].id, Math.round(-topOf(heads[best])), Date.now()];
+            var keys = Object.keys(map).sort(function (a, b) { return map[b][2] - map[a][2]; });
+            keys.slice(60).forEach(function (k) { delete map[k]; });
+            store.set(KEY, JSON.stringify(map));
+        }
+        scroller.addEventListener('scroll', function () { if (!timer) timer = setTimeout(save, 500); }, { passive: true });
+        ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (ev) { window.addEventListener(ev, function () { moved = true; }, { passive: true, capture: true }); });
+        var reloadPos = null;
+        try { reloadPos = sessionStorage.getItem('mdview.scroll:' + path); } catch (e) {}
+        var saved = load()[path];
+        if (!saved || reloadPos !== null || location.hash) return;
+        function restore() {
+            if (moved) return;
+            var el = document.getElementById(saved[0]);
+            if (!el) return;
+            var delta = topOf(el) + saved[1];
+            if (host) host.scrollTop += delta; else window.scrollBy(0, delta);
+        }
+        restore(); window.addEventListener('load', restore); setTimeout(restore, 900);
+    })();
 
     // ---- live reload that keeps your place -------------------------------------------------------
     var SKEY = 'mdview.scroll:' + location.pathname;
