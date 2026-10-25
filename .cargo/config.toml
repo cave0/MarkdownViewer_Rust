@@ -1,0 +1,6 @@
+# Native Windows build (MSVC toolchain):  cargo build --release
+# x86-64-v2 = SSE4.2 + POPCNT: runs on every CPU since ~2009 (your Ivy Bridge i5-3230M included)
+# and, unlike x86-64-v3, never emits AVX2/BMI2 instructions that Ivy Bridge lacks.
+# crt-static: no Visual C++ Redistributable needed on the target machine.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v2", "-C", "target-feature=+crt-static"]
