@@ -488,6 +488,53 @@ body.night-mode .turn-user > [data-role] { color: #e0a45c; }
 .outline-filter input:focus { border-color: var(--accent-blue); }
 .mdview-sidebar a[hidden] { display: none; }
 
+/* ---- light theme (Ctrl+Shift+L): same variables, light values; hljs palette mirrors the print palette ---- */
+#light-toggle-btn {
+    position: fixed; top: 14px; right: 266px; z-index: 50;
+    background-color: var(--bg-subtle); border: 1px solid var(--border-default); border-radius: 4px;
+    color: var(--text-muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 5px 9px;
+}
+#light-toggle-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+body.theme-light {
+    --bg-canvas: #ffffff; --bg-subtle: #f6f8fa; --border-default: #d0d7de; --border-muted: #d8dee4;
+    --text-primary: #1f2328; --text-title: #000000; --text-muted: #59636e; --accent-blue: #0969da;
+    --code-bg: #f6f8fa; --table-stripe: #f6f8fa; --table-hover: #eaeef2;
+    color-scheme: light;
+}
+body.theme-light ::selection { background-color: #0969da33; color: inherit; }
+body.theme-light .hljs { color: #1f2328; }
+body.theme-light .hljs-doctag, body.theme-light .hljs-keyword, body.theme-light .hljs-template-tag, body.theme-light .hljs-template-variable, body.theme-light .hljs-type, body.theme-light .hljs-variable.language_ { color: #cf222e; }
+body.theme-light .hljs-title, body.theme-light .hljs-title.class_, body.theme-light .hljs-title.function_ { color: #8250df; }
+body.theme-light .hljs-attr, body.theme-light .hljs-attribute, body.theme-light .hljs-literal, body.theme-light .hljs-meta, body.theme-light .hljs-number, body.theme-light .hljs-operator, body.theme-light .hljs-variable, body.theme-light .hljs-selector-attr, body.theme-light .hljs-selector-class, body.theme-light .hljs-selector-id { color: #0550ae; }
+body.theme-light .hljs-string, body.theme-light .hljs-regexp, body.theme-light .hljs-meta .hljs-string { color: #0a3069; }
+body.theme-light .hljs-comment, body.theme-light .hljs-quote, body.theme-light .hljs-code, body.theme-light .hljs-formula { color: #6e7781; }
+body.theme-light .hljs-built_in, body.theme-light .hljs-symbol { color: #953800; }
+body.theme-light .hljs-name, body.theme-light .hljs-selector-tag, body.theme-light .hljs-selector-pseudo { color: #116329; }
+body.theme-light .hljs-addition { color: #116329; background-color: #dafbe1; }
+body.theme-light .hljs-deletion { color: #82071e; background-color: #ffebe9; }
+body.theme-light img { box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15); }
+
+/* ---- diagrams: wide ones scroll instead of shrinking; hover tools; full-size overlay; math copy; ==mark== ---- */
+pre.mermaid { position: relative; overflow-x: auto; }
+pre.mermaid > svg { display: block; margin: 0 auto; }
+.dgm-tools, .tex-copy { opacity: 0; transition: opacity .15s; }
+.dgm-tools { position: absolute; top: 4px; right: 6px; display: flex; gap: 4px; z-index: 2; }
+pre.mermaid:hover .dgm-tools, .math-display:hover .tex-copy, .dgm-tools:focus-within, .tex-copy:focus { opacity: 1; }
+.dgm-tools button, .tex-copy {
+    background: var(--bg-subtle); border: 1px solid var(--border-default); border-radius: 4px;
+    color: var(--text-muted); cursor: pointer; font-size: 11px; line-height: 1; padding: 3px 7px;
+}
+.dgm-tools button:hover, .tex-copy:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.math-display { position: relative; }
+.tex-copy { position: absolute; top: 2px; right: 4px; }
+pre.mermaid > svg { cursor: zoom-in; }
+.dgm-overlay { position: fixed; inset: 0; z-index: 130; background: rgba(0, 0, 0, .82); overflow: auto; padding: 40px 20px; text-align: center; }
+.dgm-overlay > svg { display: block; margin: 0 auto; max-width: none; background: var(--bg-canvas); border-radius: 8px; padding: 12px; box-sizing: content-box; }
+.dgm-close { position: fixed; top: 12px; right: 18px; z-index: 131; background: var(--bg-subtle); border: 1px solid var(--border-default); border-radius: 4px; color: var(--text-primary); cursor: pointer; font-size: 15px; padding: 4px 9px; }
+mark { background: #bb800966; color: inherit; border-radius: 3px; padding: 0 .15em; }
+body.theme-light mark { background: #fff8c5; }
+@media print { .dgm-tools, .tex-copy, .dgm-overlay { display: none !important; } pre.mermaid { overflow: visible; } }
+
 /* ---- svg fences, quick open ---- */
 .svg-render { background: transparent; border-radius: 6px; padding: 0; margin: 1.2em 0; text-align: center; overflow-x: auto; }
 .svg-render img { display: inline-block; margin: 0; box-shadow: none; max-width: 100%; max-height: 80vh; cursor: zoom-in; background: transparent; }
