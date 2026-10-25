@@ -1,0 +1,10 @@
+/target/
+/dist/
+*.exe
+*.pdb
+.vs/
+.idea/
+.vscode/
+Thumbs.db
+/tests/ui/node_modules/
+/tests/ui/package-lock.json
