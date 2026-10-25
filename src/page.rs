@@ -204,6 +204,13 @@ mod tests {
     }
 
     #[test]
+    fn embedded_css_keeps_svg_frame_transparent() {
+        // SVG fences are dark-mode images with their own background; a white frame around them was a regression.
+        assert!(!STYLE.contains(".svg-render { background: #fff"));
+        assert!(STYLE.contains(".svg-render { background: transparent"));
+    }
+
+    #[test]
     fn decodes_encodings() {
         assert_eq!(decode_text(b"\xEF\xBB\xBFhi"), "hi");
         assert_eq!(decode_text(b"caf\xE9 \x93q\x94"), "café “q”");
