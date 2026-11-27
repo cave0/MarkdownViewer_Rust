@@ -79,7 +79,7 @@ const scrollAll = async (p) => {
 await scrollAll(page1);
 await page1.waitForTimeout(500);
 
-// ---- Find keeps focus and the caret while typing incrementally ----------------------------------------
+// ---- Find keeps focus, highlights matches, and navigates results --------------------------------------
 await page1.keyboard.press('Control+f');
 const findOpened = await page1.evaluate(() => {
   const bar = document.getElementById('find-bar');
@@ -100,13 +100,17 @@ await page1.keyboard.type('highlighted text', { delay: 15 });
 const findState = await page1.evaluate(() => {
   const bar = document.getElementById('find-bar');
   const input = bar.querySelector('input');
+  const all = window.CSS && CSS.highlights && CSS.highlights.get('mdview-find-matches');
+  const current = window.CSS && CSS.highlights && CSS.highlights.get('mdview-find-current');
+  const currentRange = current && Array.from(current)[0];
   return {
     value: input.value,
     focused: document.activeElement === input,
     caretAtEnd: input.selectionStart === input.value.length && input.selectionEnd === input.value.length,
     focusSamples: input.__findFocusSamples,
     missed: bar.classList.contains('miss'),
-    selectedText: window.getSelection().toString()
+    matchCount: all ? all.size : 0,
+    currentText: currentRange ? currentRange.toString() : ''
   };
 });
 check('typing a multi-character query keeps focus after every character and preserves the caret',
@@ -116,12 +120,71 @@ check('typing a multi-character query keeps focus after every character and pres
   findState.focusSamples.length === 'highlighted text'.length &&
   findState.focusSamples.every(Boolean),
   JSON.stringify(findState));
-check('incremental Find selects the matching document text',
-  !findState.missed && findState.selectedText.toLowerCase() === 'highlighted text',
+check('incremental Find highlights the matching document text without moving focus',
+  !findState.missed && findState.matchCount >= 1 && findState.currentText.toLowerCase() === 'highlighted text',
   JSON.stringify(findState));
 await page1.keyboard.press('Escape');
-const findClosed = await page1.evaluate(() => !document.getElementById('find-bar').classList.contains('open'));
-check('Escape closes Find after incremental search', findClosed);
+const findClosed = await page1.evaluate(() =>
+  !document.getElementById('find-bar').classList.contains('open') &&
+  !CSS.highlights.has('mdview-find-matches') &&
+  !CSS.highlights.has('mdview-find-current')
+);
+check('Escape closes Find and clears its highlights', findClosed);
+
+// Repeated matches exercise Enter, Shift+Enter, arrow keys, and the toolbar navigation buttons.
+await page1.keyboard.press('Control+f');
+await page1.keyboard.type('lorem ipsum', { delay: 10 });
+const readCurrentFind = () => page1.evaluate(() => {
+  const all = CSS.highlights.get('mdview-find-matches');
+  const current = CSS.highlights.get('mdview-find-current');
+  const range = current && Array.from(current)[0];
+  const paragraph = range && range.startContainer.parentElement.closest('p');
+  return {
+    count: all ? all.size : 0,
+    text: range ? range.toString() : '',
+    paragraph: paragraph ? paragraph.textContent : '',
+    offset: range ? range.startOffset : -1,
+    focused: document.activeElement === document.querySelector('#find-bar input')
+  };
+});
+const firstFind = await readCurrentFind();
+await page1.keyboard.press('Enter');
+const enterFind = await readCurrentFind();
+check('Enter advances to the next matching result',
+  firstFind.count > 1 && enterFind.offset !== firstFind.offset && enterFind.focused,
+  JSON.stringify({ firstFind, enterFind }));
+
+await page1.keyboard.press('ArrowDown');
+const downFind = await readCurrentFind();
+check('ArrowDown advances to the next matching result',
+  downFind.offset !== enterFind.offset && downFind.focused,
+  JSON.stringify({ enterFind, downFind }));
+
+await page1.keyboard.press('ArrowUp');
+const upFind = await readCurrentFind();
+check('ArrowUp moves to the previous matching result',
+  upFind.offset === enterFind.offset && upFind.focused,
+  JSON.stringify({ enterFind, upFind }));
+
+await page1.keyboard.press('Shift+Enter');
+const shiftEnterFind = await readCurrentFind();
+check('Shift+Enter moves to the previous matching result',
+  shiftEnterFind.offset === firstFind.offset && shiftEnterFind.focused,
+  JSON.stringify({ firstFind, shiftEnterFind }));
+
+await page1.locator('#find-bar button').nth(1).click();
+const buttonNextFind = await readCurrentFind();
+check('Find next button advances and returns focus to the input',
+  buttonNextFind.offset !== shiftEnterFind.offset && buttonNextFind.focused,
+  JSON.stringify({ shiftEnterFind, buttonNextFind }));
+
+await page1.locator('#find-bar button').nth(0).click();
+const buttonPreviousFind = await readCurrentFind();
+check('Find previous button goes back and returns focus to the input',
+  buttonPreviousFind.offset === shiftEnterFind.offset && buttonPreviousFind.focused,
+  JSON.stringify({ shiftEnterFind, buttonPreviousFind }));
+
+await page1.keyboard.press('Escape');
 
 // ---- file export bundles local assets and protects the source file ------------------------------------
 const exportRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mdview-export-'));
