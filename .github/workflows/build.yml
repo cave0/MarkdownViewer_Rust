@@ -36,12 +36,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
+        with:
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build actual Rust renderer
         run: cargo build --locked
-        with:
-          node-version: 22
       - name: Install
         working-directory: tests/ui
         run: |
