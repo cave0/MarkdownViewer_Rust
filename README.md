@@ -45,4 +45,4 @@ The window needs Windows, but the renderer is portable: `cargo test --locked` ru
 * `cargo build --locked`, then `cd tests/ui && npm install && npx playwright install chromium && npm test` - headless-browser tests using the actual Rust-generated HTML for
   `assets/app.js` and `style.css` (diagram rendering and id collisions, wide-diagram scrolling, math copy, emoji,
   light theme, reading position). Set `CHROME_PATH` to use an existing Chromium.
-* CI runs all of the above; formatting and Clippy are required checks, while `cargo audit` remains advisory.
+* CI runs all of the above; Clippy is a required check; rustfmt remains advisory pending a repository-wide formatting cleanup, and `cargo audit` is advisory.

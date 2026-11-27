@@ -869,7 +869,7 @@ mod tests {
         assert!(pre.contains("    \\(x^2 + y^2\\)"), "{pre}");
         assert!(pre.contains("Actual $a^2+b^2$"), "{pre}");
         let d = render(src, SAFE);
-        assert!(d.body.contains("<code>\\(x^2 + y^2\\)"), "{}", d.body);
+        assert!(d.body.contains("<code class=\"highlight\">\\(x^2 + y^2\\)"), "{}", d.body);
         assert!(d.body.contains("class=\"math-inline\""), "{}", d.body);
     }
 

@@ -1,5 +1,5 @@
 // Browser tests for the embedded UI (assets/app.js + style.css), run against the real files with Playwright.
-// Usage: npm ci && npx playwright install chromium && npm test   (set CHROME_PATH to use another Chromium)
+// Usage: npm install && npx playwright install chromium && npm test   (set CHROME_PATH to use another Chromium)
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';

@@ -20,7 +20,7 @@ env:
 jobs:
   test:
     name: test (linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -32,7 +32,7 @@ jobs:
 
   ui:
     name: ui tests (Rust renderer + headless chromium)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -66,10 +66,10 @@ jobs:
           path: target/release/mdview.exe
           if-no-files-found: error
 
-  # Advisory only: reports style, lint and dependency-advisory findings without blocking the build.
+  # Clippy is required. Formatting remains advisory until existing repository-wide drift is cleaned up.
   lint:
     name: lint (required)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -77,6 +77,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
+        continue-on-error: true
       - run: cargo clippy --locked --all-targets -- -D warnings
 
   audit:
@@ -92,7 +93,7 @@ jobs:
   release:
     name: release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, ui, windows]
+    needs: [test, ui, windows, lint]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -155,6 +155,8 @@ fn main() {
                 let source_url = site::file_url(source_dir)?;
                 let mut html = String::from_utf8_lossy(&r.body).into_owned();
                 html = html.replace("<head>", &format!("<head><base href=\"{source_url}\">"));
+                // The page CSP blocks <base>; remove only that directive for the exported file.
+                html = html.replace("base-uri 'none'; ", "");
                 for asset in ["boot.js", "app.js", "katex/katex.min.css"] {
                     let old = format!("/_a/{asset}");
                     let new = format!("{assets_url}{asset}");
