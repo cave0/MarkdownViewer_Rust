@@ -124,9 +124,18 @@ fn main() {
         };
         let url = site.url_for(&site.current()).unwrap_or_default();
         let r = site.serve(&url);
-        if out != "-" && dump_output_is_input(file, std::path::Path::new(out)).unwrap_or(false) {
-            report("mdview", "Refusing to overwrite the input Markdown file with HTML output.");
-            std::process::exit(2);
+        if out != "-" {
+            match dump_output_is_input(file, std::path::Path::new(out)) {
+                Ok(true) => {
+                    report("mdview", "Refusing to overwrite the input Markdown file with HTML output.");
+                    std::process::exit(2);
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    report("mdview", &format!("Cannot resolve HTML output path: {e}"));
+                    std::process::exit(2);
+                }
+            }
         }
         let res = if out == "-" {
             use std::io::Write;
@@ -148,5 +157,32 @@ fn main() {
         let _ = args.file;
         eprintln!("mdview's window needs Windows (WebView2). Use --dump-html <OUT> to render to a file.");
         std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir() -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("mdview_dump_test_{}_{}", std::process::id(), nonce))
+    }
+
+    #[test]
+    fn dump_output_refuses_to_overwrite_source() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("document.md");
+        std::fs::write(&source, "# keep me").unwrap();
+
+        assert!(dump_output_is_input(&source, &source).unwrap());
+        assert!(dump_output_is_input(&source, &dir.join(".").join("document.md")).unwrap());
+        assert!(!dump_output_is_input(&source, &dir.join("document.html")).unwrap());
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
