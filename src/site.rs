@@ -56,7 +56,7 @@ pub struct Site {
 }
 
 pub fn is_md(p: &Path) -> bool {
-    p.extension().and_then(|e| e.to_str()).map_or(false, |e| MD_EXTS.iter().any(|m| e.eq_ignore_ascii_case(m)))
+    p.extension().and_then(|e| e.to_str()).is_some_and(|e| MD_EXTS.iter().any(|m| e.eq_ignore_ascii_case(m)))
 }
 
 pub fn file_sig(p: &Path) -> Option<Sig> {
