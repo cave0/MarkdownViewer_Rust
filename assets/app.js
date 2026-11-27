@@ -85,7 +85,7 @@
     on('theme-toggle-btn', function () { setNight(!body.classList.contains('night-mode')); });
     on('bgtheme-toggle-btn', function () { setBlack(!body.classList.contains('theme-black')); });
     on('fullscreen-toggle-btn', function () { ipc('fullscreen'); });
-    on('print-toggle-btn', function () { window.print(); });
+    on('print-toggle-btn', printPage);
     on('back-toggle-btn', function () { history.back(); });
     on('source-toggle-btn', function () {
         var s = !body.classList.contains('view-source');
@@ -153,10 +153,11 @@
         return scriptCache[src];
     }
     var pending = [];   // functions that force-render everything still queued (used for printing)
+    var lazyJobs = [];  // script-load and observer setup promises, awaited before printing
     function lazy(selector, src, init, render) {
         var els = Array.prototype.slice.call(document.querySelectorAll(selector));
         if (!els.length) return;
-        loadScript(src).then(function () {
+        var job = loadScript(src).then(function () {
             if (init) init();
             var todo = new Set(els);
             function run(el) { if (todo.delete(el)) { try { render(el); } catch (e) {} } }
@@ -169,6 +170,7 @@
             }, { root: host, rootMargin: '1200px 0px' });
             els.forEach(function (el) { io.observe(el); });
         }, function () {});
+        lazyJobs.push(job);
     }
 
     lazy('pre code[class*="language-"]', '/_a/hljs.min.js', null, function (code) {
@@ -259,6 +261,21 @@
             return mermaid.run({ nodes: [el], suppressErrors: true });
         }).then(function () { decorateDiagram(el, src); }).catch(function () {});
     });
+    // The toolbar and Ctrl+P paths wait for lazy libraries and async Mermaid renders.
+    function printPage() {
+        Promise.all(lazyJobs).then(function () {
+            pending.forEach(function (f) { f(); });
+            return mermaidQueue;
+        }).then(function () {
+            return new Promise(function (resolve) {
+                requestAnimationFrame(function () { requestAnimationFrame(resolve); });
+            });
+        }).then(function () {
+            window.print();
+        });
+    }
+    onKey(function (e) { return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p'; }, printPage);
+    // Also render already-loaded items when printing is triggered by the WebView/system menu.
     window.addEventListener('beforeprint', function () { pending.forEach(function (f) { f(); }); });
 
     // ---- conversation turns (speaker headings / "**You:**" labels found by the renderer) ----------

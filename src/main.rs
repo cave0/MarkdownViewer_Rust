@@ -77,6 +77,29 @@ pub fn report(title: &str, text: &str) {
     eprintln!("{title}: {text}");
 }
 
+
+fn dump_output_is_input(input: &std::path::Path, output: &std::path::Path) -> std::io::Result<bool> {
+    let input = std::fs::canonicalize(input)?;
+    let absolute_output = if output.is_absolute() {
+        output.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(output)
+    };
+
+    let resolved_output = if absolute_output.exists() {
+        std::fs::canonicalize(&absolute_output)?
+    } else {
+        let name = absolute_output.file_name().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no filename")
+        })?;
+        let parent = absolute_output.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no parent directory")
+        })?;
+        std::fs::canonicalize(parent)?.join(name)
+    };
+    Ok(input == resolved_output)
+}
+
 fn main() {
     let args = match parse_args(std::env::args().skip(1)) {
         Parsed::Run(a) => a,
@@ -101,6 +124,10 @@ fn main() {
         };
         let url = site.url_for(&site.current()).unwrap_or_default();
         let r = site.serve(&url);
+        if out != "-" && dump_output_is_input(file, std::path::Path::new(out)).unwrap_or(false) {
+            report("mdview", "Refusing to overwrite the input Markdown file with HTML output.");
+            std::process::exit(2);
+        }
         let res = if out == "-" {
             use std::io::Write;
             std::io::stdout().write_all(&r.body)

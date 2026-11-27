@@ -565,20 +565,26 @@ fn needs_math_pass(s: &str) -> bool {
 fn is_indented_code_line(line: &str) -> bool {
     let mut rest = line.trim_end_matches(['\r', '\n']);
     loop {
-        let leading = rest.trim_start_matches([' ', '\t']);
-        if let Some(after_quote) = leading.strip_prefix('>') {
-            rest = after_quote.strip_prefix(' ').unwrap_or(after_quote);
-            let next = rest.trim_start_matches([' ', '\t']);
-            if next.starts_with('>') {
-                rest = next;
-                continue;
+        let spaces = rest.bytes().take_while(|b| *b == b' ').count();
+        if spaces <= 3 && rest.as_bytes().get(spaces) == Some(&b'>') {
+            rest = &rest[spaces + 1..];
+            if let Some(after_space) = rest.strip_prefix(' ') {
+                rest = after_space;
             }
-        } else {
-            rest = leading;
+            continue;
         }
         break;
     }
-    rest.starts_with('\t') || rest.bytes().take_while(|b| *b == b' ').count() >= 4
+
+    let mut columns = 0usize;
+    for b in rest.bytes() {
+        match b {
+            b' ' => columns += 1,
+            b'\t' => columns = (columns / 4 + 1) * 4,
+            _ => break,
+        }
+    }
+    columns >= 4
 }
 
 /// Make math robust before pulldown-cmark sees it (it has no block-level math, so a line that
