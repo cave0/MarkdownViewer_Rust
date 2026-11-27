@@ -399,7 +399,7 @@ mod tests {
         let r = s.serve("/a.md");
         assert_eq!(r.status, 200);
         let html = String::from_utf8(r.body.to_vec()).unwrap();
-        assert!(html.contains("<h1 id=\"hello\">Hello</h1>"));
+        assert!(html.contains("<h1 id=\"hello\"") && html.contains("Hello</h1>"));
         assert!(html.contains("Content-Security-Policy"));
         assert_eq!(s.serve("/sub/b.md").status, 200);
         assert_eq!(s.serve("/pic.png").content_type, "image/png");

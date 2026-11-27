@@ -36,8 +36,9 @@ pub struct Doc {
     pub turn_source: Option<String>,
 }
 
-pub fn render(src: &str, opts: RenderOpts) -> Doc {
-    let src = preprocess_math(src);
+pub fn render(original_src: &str, opts: RenderOpts) -> Doc {
+    let src = preprocess_math(original_src);
+    let source_lines = SourceLineMap::new(original_src, &src);
     let mut po = Options::empty();
     po.insert(Options::ENABLE_TABLES);
     po.insert(Options::ENABLE_FOOTNOTES);
@@ -61,6 +62,7 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
         idx: usize,
         level: u8,
         start: usize,
+        source_line: Option<u32>,
         id: Option<String>,
         classes: Vec<String>,
         text: String,
@@ -80,7 +82,7 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
     }
     let mut heading: Option<Hd> = None;
     let mut image: Option<Img> = None;
-    let mut code: Option<(String, String)> = None; // (lang, content)
+    let mut code: Option<(String, String, Option<u32>)> = None; // (lang, content, source line)
     let mut in_meta = false;
     let mut link_depth = 0u32;
     // chat-turn detection
@@ -89,6 +91,9 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
     let mut p_idx = 0usize;
     let mut p_start = 0usize;
     let mut p_text = String::new();
+    let mut p_sync_idx: Option<usize> = None;
+    let mut p_source_line: Option<u32> = None;
+    let mut sync_containers: Vec<usize> = Vec::new();
     let mut turns = 0usize;
     let mut u16c = U16Counter::default();
 
@@ -116,17 +121,26 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
             }
             continue;
         }
-        if let Some((_, buf)) = code.as_mut() {
+        if let Some((_, buf, _)) = code.as_mut() {
             match ev {
                 Event::Text(t) => buf.push_str(&t),
                 Event::End(TagEnd::CodeBlock) => {
-                    let (lang, buf) = code.take().unwrap();
-                    if lang == "math" {
+                    let (lang, buf, source_line) = code.take().unwrap();
+                    let rendered = if lang == "math" {
                         has_math = true;
-                        events.push(Event::Html(CowStr::from(math_html(&buf, true))));
+                        math_html(&buf, true)
                     } else {
-                        events.push(Event::Html(CowStr::from(code_html(&lang, &buf))));
-                    }
+                        code_html(&lang, &buf)
+                    };
+                    let rendered = if let Some(start) = source_line {
+                        let end = source_lines.as_ref().map_or(start, |m| m.line(range.end.saturating_sub(1)));
+                        format!(
+                            "<div class=\"md-source-block\" data-md-start-line=\"{start}\" data-md-end-line=\"{end}\">{rendered}</div>"
+                        )
+                    } else {
+                        rendered
+                    };
+                    events.push(Event::Html(CowStr::from(rendered)));
                 }
                 _ => {}
             }
@@ -149,7 +163,10 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
                     p_state = PState::Done;
                     if let Some(role) = role_of(&p_text) {
                         let o = u16c.at(&src, p_start);
-                        events[p_idx] = Event::Html(CowStr::from(format!("<p data-role=\"{role}\" data-o=\"{o}\">")));
+                        let source_attr = p_source_line.map_or_else(String::new, |line| format!(" data-md-start-line=\"{line}\""));
+                        events[p_idx] = Event::Html(CowStr::from(format!(
+                            "<p data-role=\"{role}\" data-o=\"{o}\"{source_attr}>"
+                        )));
                         turns += 1;
                     }
                 }
@@ -160,22 +177,63 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
 
         match ev {
             Event::Start(Tag::MetadataBlock(_)) => in_meta = true,
-            Event::Start(Tag::BlockQuote(_) | Tag::List(_) | Tag::Item | Tag::FootnoteDefinition(_) | Tag::Table(_) | Tag::DefinitionList) => {
+            Event::Start(Tag::BlockQuote(_) | Tag::List(_) | Tag::FootnoteDefinition(_) | Tag::Table(_) | Tag::DefinitionList) => {
+                if let Some(line) = source_lines.as_ref().map(|m| m.line(range.start)) {
+                    let idx = events.len();
+                    events.push(Event::Html(CowStr::from(format!(
+                        "<div class=\"md-source-block\" data-md-start-line=\"{line}\">"
+                    ))));
+                    sync_containers.push(idx);
+                }
                 container_depth += 1;
                 events.push(ev);
             }
-            Event::End(TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item | TagEnd::FootnoteDefinition | TagEnd::Table | TagEnd::DefinitionList) => {
+            Event::End(TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::FootnoteDefinition | TagEnd::Table | TagEnd::DefinitionList) => {
                 container_depth = container_depth.saturating_sub(1);
                 events.push(ev);
+                if let Some(idx) = sync_containers.pop() {
+                    if let Some(line) = source_lines.as_ref().map(|m| m.line(range.end.saturating_sub(1))) {
+                        append_source_end_line(&mut events, idx, line);
+                    }
+                    events.push(Event::Html(CowStr::Borrowed("</div>")));
+                }
             }
-            Event::Start(Tag::Paragraph) if container_depth == 0 && heading.is_none() => {
-                events.push(Event::Html(CowStr::Borrowed("<p>")));
+            Event::Start(Tag::Item) => {
+                container_depth += 1;
+                let attr = source_lines
+                    .as_ref()
+                    .map_or_else(String::new, |m| format!(" data-md-start-line=\"{}\"", m.line(range.start)));
+                events.push(Event::Html(CowStr::from(format!("<li{attr}>"))));
+            }
+            Event::End(TagEnd::Item) => {
+                container_depth = container_depth.saturating_sub(1);
+                events.push(Event::Html(CowStr::Borrowed("</li>")));
+            }
+            Event::Start(Tag::TableRow) => {
+                let attr = source_lines
+                    .as_ref()
+                    .map_or_else(String::new, |m| format!(" data-md-start-line=\"{}\"", m.line(range.start)));
+                events.push(Event::Html(CowStr::from(format!("<tr{attr}>"))));
+            }
+            Event::End(TagEnd::TableRow) => events.push(Event::Html(CowStr::Borrowed("</tr>"))),
+            Event::Start(Tag::Paragraph) if heading.is_none() => {
+                let line = source_lines.as_ref().map(|m| m.line(range.start));
+                let attr = line.map_or_else(String::new, |n| format!(" data-md-start-line=\"{n}\""));
+                events.push(Event::Html(CowStr::from(format!("<p{attr}>"))));
                 p_idx = events.len() - 1;
+                p_sync_idx = Some(p_idx);
                 p_start = range.start;
-                p_state = PState::Fresh;
+                p_source_line = line;
+                p_state = if container_depth == 0 { PState::Fresh } else { PState::None };
             }
-            Event::End(TagEnd::Paragraph) if p_state != PState::None => {
+            Event::End(TagEnd::Paragraph) => {
+                if let Some(idx) = p_sync_idx.take() {
+                    if let Some(line) = source_lines.as_ref().map(|m| m.line(range.end.saturating_sub(1))) {
+                        append_source_end_line(&mut events, idx, line);
+                    }
+                }
                 p_state = PState::None;
+                p_source_line = None;
                 events.push(Event::Html(CowStr::Borrowed("</p>\n")));
             }
             Event::Start(Tag::Heading { level, id, classes, .. }) => {
@@ -184,6 +242,7 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
                     idx: events.len() - 1,
                     level: level as u8,
                     start: range.start,
+                    source_line: source_lines.as_ref().map(|m| m.line(range.start)),
                     id: id.map(|s| s.to_string()),
                     classes: classes.into_iter().map(|c| c.to_string()).collect(),
                     text: String::new(),
@@ -205,6 +264,11 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
                         escape_html(&mut s, &h.classes.join(" ")).ok();
                         s.push('"');
                     }
+                    if let Some(line) = h.source_line {
+                        s.push_str(&format!(" data-md-start-line=\"{line}\""));
+                        let end_line = source_lines.as_ref().map_or(line, |m| m.line(range.end.saturating_sub(1)));
+                        s.push_str(&format!(" data-md-end-line=\"{end_line}\""));
+                    }
                     if let Some(r) = role {
                         let o = u16c.at(&src, h.start);
                         s.push_str(&format!(" data-role=\"{r}\" data-o=\"{o}\""));
@@ -224,7 +288,7 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
                     }
                     CodeBlockKind::Indented => String::new(),
                 };
-                code = Some((lang, String::new()));
+                code = Some((lang, String::new(), source_lines.as_ref().map(|m| m.line(range.start))));
             }
             Event::Start(Tag::Image { dest_url, title, .. }) => {
                 image = Some(Img { src: dest_url.to_string(), title: title.to_string(), alt: String::new(), depth: 0 });
@@ -246,7 +310,23 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
             }
             Event::DisplayMath(m) => {
                 has_math = true;
-                events.push(Event::Html(CowStr::from(math_html(&m, true))));
+                let rendered = math_html(&m, true);
+                let rendered = if let Some(start) = source_lines.as_ref().map(|m| m.line(range.start)) {
+                    let end = source_lines.as_ref().map_or(start, |m| m.line(range.end.saturating_sub(1)));
+                    format!(
+                        "<div class=\"md-source-block\" data-md-start-line=\"{start}\" data-md-end-line=\"{end}\">{rendered}</div>"
+                    )
+                } else {
+                    rendered
+                };
+                events.push(Event::Html(CowStr::from(rendered)));
+            }
+            Event::Rule => {
+                let attr = source_lines.as_ref().map_or_else(String::new, |m| {
+                    let line = m.line(range.start);
+                    format!(" data-md-start-line=\"{line}\" data-md-end-line=\"{line}\"")
+                });
+                events.push(Event::Html(CowStr::from(format!("<hr{attr}>\n"))));
             }
             Event::Html(h) | Event::InlineHtml(h) => {
                 if opts.safe {
@@ -310,6 +390,102 @@ impl U16Counter {
             self.byte = byte;
         }
         self.units
+    }
+}
+
+
+/// Map parser line offsets back to the original Markdown source.
+///
+/// Math preprocessing can fold multiple source lines into one parser line. We retain a compact
+/// line correspondence so the source viewer can synchronize without modifying displayed source.
+/// The raw-source pane is capped at 2 MB in page.rs, so larger documents do not need this index.
+struct SourceLineMap {
+    processed_starts: Vec<usize>,
+    source_lines: Vec<u32>,
+}
+
+impl SourceLineMap {
+    fn new(original: &str, processed: &str) -> Option<Self> {
+        const MAX_INDEXED_BYTES: usize = 2_000_000;
+        const SEARCH_AHEAD: usize = 256;
+        const CONTEXT_LINES: usize = 4;
+        if original.len() > MAX_INDEXED_BYTES {
+            return None;
+        }
+
+        fn lines(text: &str) -> Vec<&str> {
+            text.split_inclusive('\n').collect()
+        }
+        fn clean(line: &str) -> &str {
+            let no_lf = line.strip_suffix('\n').unwrap_or(line);
+            no_lf.strip_suffix('\r').unwrap_or(no_lf)
+        }
+
+        let source = lines(original);
+        let rendered = lines(processed);
+        if source.is_empty() || rendered.is_empty() {
+            return None;
+        }
+
+        let mut processed_starts = Vec::with_capacity(rendered.len());
+        let mut source_lines = Vec::with_capacity(rendered.len());
+        let mut processed_offset = 0usize;
+        let mut source_cursor = 0usize;
+
+        for (i, processed_line) in rendered.iter().enumerate() {
+            processed_starts.push(processed_offset);
+            let current = clean(processed_line);
+            let selected = if source_cursor < source.len() && clean(source[source_cursor]) == current {
+                let found = source_cursor;
+                source_cursor += 1;
+                found
+            } else {
+                let limit = source.len().min(source_cursor.saturating_add(SEARCH_AHEAD));
+                let mut best: Option<(usize, usize)> = None;
+                for candidate in source_cursor..limit {
+                    if clean(source[candidate]) != current {
+                        continue;
+                    }
+                    let mut score = 0usize;
+                    for k in 0..CONTEXT_LINES {
+                        let (Some(pl), Some(sl)) = (rendered.get(i + k), source.get(candidate + k)) else { break };
+                        if clean(pl) != clean(sl) {
+                            break;
+                        }
+                        score += 1;
+                    }
+                    if best.map_or(true, |(_, best_score)| score > best_score) {
+                        best = Some((candidate, score));
+                    }
+                }
+                if let Some((found, _)) = best {
+                    source_cursor = found + 1;
+                    found
+                } else {
+                    source_cursor.min(source.len() - 1)
+                }
+            };
+            source_lines.push((selected + 1).min(u32::MAX as usize) as u32);
+            processed_offset += processed_line.len();
+        }
+
+        Some(Self { processed_starts, source_lines })
+    }
+
+    fn line(&self, processed_offset: usize) -> u32 {
+        let idx = self.processed_starts.partition_point(|start| *start <= processed_offset).saturating_sub(1);
+        self.source_lines.get(idx).copied().unwrap_or(1)
+    }
+}
+
+/// Add an end-line attribute to a previously emitted opening tag.
+fn append_source_end_line(events: &mut [Event<'_>], index: usize, line: u32) {
+    if let Some(Event::Html(html)) = events.get_mut(index) {
+        let mut opening = html.to_string();
+        if let Some(end) = opening.rfind('>') {
+            opening.insert_str(end, &format!(" data-md-end-line=\"{line}\""));
+            *html = CowStr::from(opening);
+        }
     }
 }
 
@@ -899,8 +1075,8 @@ mod tests {
     #[test]
     fn headings_get_unique_ids_and_toc() {
         let d = render("# A b\n## A b\n### `code` *em* x\n", SAFE);
-        assert!(d.body.contains("<h1 id=\"a-b\">"));
-        assert!(d.body.contains("<h2 id=\"a-b-1\">"));
+        assert!(d.body.contains("<h1 id=\"a-b\" data-md-start-line="));
+        assert!(d.body.contains("<h2 id=\"a-b-1\" data-md-start-line="));
         assert_eq!(d.toc[2].title, "code em x");
         assert_eq!(d.toc.len(), 3);
     }
@@ -935,6 +1111,33 @@ mod tests {
         let d = render(src, SAFE);
         assert!(d.body.contains("<code class=\"highlight\">\\(x^2 + y^2\\)"), "{}", d.body);
         assert!(d.body.contains("class=\"math-inline\""), "{}", d.body);
+    }
+
+    #[test]
+    fn source_line_map_tracks_original_lines_after_display_and_inline_math() {
+        let display = "## Before\r\n\r\n$\r\nx^2\r\n=\r\ny^2\r\n$\r\n\r\n## After\r\n";
+        let processed = preprocess_math(display);
+        let after = processed.find("## After").unwrap();
+        let map = SourceLineMap::new(display, &processed).unwrap();
+        assert_eq!(map.line(after), 9);
+        let rendered = render(display, SAFE);
+        assert!(rendered.body.contains("id=\"after\" data-md-start-line=\"9\" data-md-end-line=\"9\""), "{}", rendered.body);
+
+        let inline = "Paragraph \\(\r\nx^2\r\n\\) continued.\r\n\r\n## After\r\n";
+        let processed = preprocess_math(inline);
+        let after = processed.find("## After").unwrap();
+        let map = SourceLineMap::new(inline, &processed).unwrap();
+        assert_eq!(map.line(after), 5);
+    }
+
+    #[test]
+    fn rendered_blocks_include_source_line_anchors() {
+        let src = "# Heading\n\nParagraph one.\n\n- first\n- second\n\n~~~rust\nfn main() {}\n~~~\n";
+        let d = render(src, SAFE);
+        assert!(d.body.contains("data-md-start-line=\"1\" data-md-end-line=\"1\""), "{}", d.body);
+        assert!(d.body.contains("<p data-md-start-line=\"3\" data-md-end-line=\"3\">"), "{}", d.body);
+        assert!(d.body.contains("<li data-md-start-line=\"5\">"), "{}", d.body);
+        assert!(d.body.contains("class=\"md-source-block\" data-md-start-line=\"8\""), "{}", d.body);
     }
 
     #[test]
@@ -1010,7 +1213,7 @@ mod tests {
         assert!(!d.body.contains("<ul>") && !d.body.contains("<ol>") && !d.body.contains("<h"), "{}", d.body);
         assert_eq!(d.body.matches("math-display").count(), 1, "{}", d.body);
         assert!(d.body.contains("\\tilde{\\mu} = \\mu^0 - RT + zF 1. # x"), "{}", d.body);
-        assert!(d.body.contains("<p>after</p>"));
+        assert!(d.body.contains("after</p>"));
     }
 
     #[test]
@@ -1026,7 +1229,7 @@ mod tests {
     fn display_math_in_lists_and_quotes_and_comments() {
         let d = render("1. item:\n   $$\n   a\n   =\n   b % note\n   $$\n2. two\n", SAFE);
         assert!(d.body.contains("a = b</span>"), "{}", d.body);
-        assert!(d.body.contains("<li>two</li>"), "{}", d.body);
+        assert!(d.body.contains("two</li>"), "{}", d.body);
         let q = render("> $$\n> x\n> -\n> y\n> $$\n", SAFE);
         assert!(q.body.contains("x - y"), "{}", q.body);
         assert!(!q.body.contains("<ul>"), "{}", q.body);
@@ -1199,7 +1402,7 @@ mod tests {
         assert!(d.toc.is_empty());
         assert_eq!(d.body.matches("math-display").count(), 2, "{}", d.body);
         assert!(d.body.contains("\\begin{align} a &amp;= b \\\\ -c &amp;= d \\end{align}"), "{}", d.body);
-        assert!(d.body.contains("<p>After</p>"));
+        assert!(d.body.contains("After</p>"));
     }
 
     #[test]

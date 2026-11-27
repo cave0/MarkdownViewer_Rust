@@ -216,6 +216,66 @@ await page1.waitForLoadState('load');
 await page1.waitForTimeout(500);
 check('toggling back restores the dark background', (await bg()) === dark);
 
+// ---- raw-source / rendered-view scroll synchronization ---------------------------------------------
+const syncMetadata = await page1.evaluate(() => ({
+  headings: document.querySelectorAll('.markdown-container h1[data-md-start-line], .markdown-container h2[data-md-start-line]').length,
+  paragraphs: document.querySelectorAll('.markdown-container p[data-md-start-line][data-md-end-line]').length,
+  codeBlocks: document.querySelectorAll('.markdown-container .md-source-block[data-md-start-line]').length,
+  fillerLine: Number(document.getElementById('filler-30')?.getAttribute('data-md-start-line')) || 0
+}));
+check('Rust renderer annotates rendered blocks with original source lines',
+  syncMetadata.headings > 0 && syncMetadata.paragraphs > 0 && syncMetadata.codeBlocks > 0 && syncMetadata.fillerLine > 0,
+  JSON.stringify(syncMetadata));
+
+const renderedToSourceTarget = await page1.evaluate(() => {
+  const host = document.querySelector('.mdview-content');
+  const heading = document.getElementById('filler-30');
+  const y = host.getBoundingClientRect().top + 104;
+  host.scrollTop += heading.getBoundingClientRect().top - y;
+  return { line: Number(heading.getAttribute('data-md-start-line')), y };
+});
+await page1.click('#source-toggle-btn');
+await page1.waitForTimeout(100);
+const renderedToSource = await page1.evaluate(({ line, y }) => {
+  const pre = document.querySelector('.raw-source-view');
+  const node = pre.firstChild;
+  const offsets = [0];
+  for (let i = 0; i < node.nodeValue.length; i++) if (node.nodeValue.charCodeAt(i) === 10) offsets.push(i + 1);
+  const offset = offsets[line - 1];
+  const range = document.createRange();
+  range.setStart(node, offset);
+  range.setEnd(node, Math.min(offset + 1, node.nodeValue.length));
+  return { top: range.getBoundingClientRect().top, y, line };
+}, renderedToSourceTarget);
+check('rendered scrolling carries the matching source line into raw view',
+  Math.abs(renderedToSource.top - renderedToSource.y) < 12, JSON.stringify(renderedToSource));
+
+const sourceToRenderedTarget = await page1.evaluate(() => {
+  const host = document.querySelector('.mdview-content');
+  const pre = document.querySelector('.raw-source-view');
+  const node = pre.firstChild;
+  const heading = document.getElementById('filler-10');
+  const line = Number(heading.getAttribute('data-md-start-line'));
+  const offsets = [0];
+  for (let i = 0; i < node.nodeValue.length; i++) if (node.nodeValue.charCodeAt(i) === 10) offsets.push(i + 1);
+  const offset = offsets[line - 1];
+  const range = document.createRange();
+  range.setStart(node, offset);
+  range.setEnd(node, Math.min(offset + 1, node.nodeValue.length));
+  const y = host.getBoundingClientRect().top + 104;
+  host.scrollTop += range.getBoundingClientRect().top - y;
+  return { line, y };
+});
+await page1.click('#source-toggle-btn');
+await page1.waitForTimeout(100);
+const sourceToRendered = await page1.evaluate(({ line, y }) => {
+  const heading = document.getElementById('filler-10');
+  return { top: heading.getBoundingClientRect().top, y, line, actualLine: Number(heading.getAttribute('data-md-start-line')) };
+}, sourceToRenderedTarget);
+check('raw-source scrolling carries the matching rendered block into rendered view',
+  sourceToRendered.line === sourceToRendered.actualLine && Math.abs(sourceToRendered.top - sourceToRendered.y) < 12,
+  JSON.stringify(sourceToRendered));
+
 // Printing while the raw-source toggle is active should still print rendered Markdown.
 await page1.click('#source-toggle-btn');
 await page1.emulateMedia({ media: 'print' });

@@ -95,11 +95,7 @@
     on('fullscreen-toggle-btn', function () { ipc('fullscreen'); });
     on('print-toggle-btn', printPage);
     on('back-toggle-btn', function () { history.back(); });
-    on('source-toggle-btn', function () {
-        var s = !body.classList.contains('view-source');
-        body.classList.toggle('view-source', s);
-        $('source-toggle-btn').title = s ? 'Show rendered view' : 'View raw Markdown source';
-    });
+    on('source-toggle-btn', toggleSourceView);
     onKey(ctrlShift('n'), function () { setNight(!body.classList.contains('night-mode')); });
     onKey(ctrlShift('k'), function () { setBlack(!body.classList.contains('theme-black')); });
     onKey(function (e) { return e.key === 'F11'; }, function () { ipc('fullscreen'); });
@@ -108,6 +104,131 @@
     // ---- sidebar ---------------------------------------------------------------------------
     var host = body.classList.contains('has-sidebar') ? document.querySelector('.mdview-content') : null;
     var scroller = host || window;
+
+    // Source/rendered synchronization is anchor-based: Markdown blocks carry original source
+    // line ranges, and the raw pane is measured with DOM Ranges so wrapping and Unicode work.
+    var sourcePane = document.querySelector('.raw-source-view');
+    var sourceTextNode = sourcePane && sourcePane.firstChild && sourcePane.firstChild.nodeType === Node.TEXT_NODE
+        ? sourcePane.firstChild : null;
+    var sourceLineOffsets = [];
+    if (sourceTextNode) {
+        var sourceText = sourceTextNode.nodeValue;
+        sourceLineOffsets.push(0);
+        for (var si = 0; si < sourceText.length; si++) {
+            if (sourceText.charCodeAt(si) === 10) sourceLineOffsets.push(si + 1);
+        }
+    }
+    var syncBlocks = Array.prototype.slice.call(
+        document.querySelectorAll('.markdown-container [data-md-start-line]')
+    ).map(function (el) {
+        return {
+            el: el,
+            start: Number(el.getAttribute('data-md-start-line')) || 1,
+            end: Number(el.getAttribute('data-md-end-line')) || Number(el.getAttribute('data-md-start-line')) || 1
+        };
+    });
+
+    function syncViewportY() {
+        var top = host ? host.getBoundingClientRect().top : 0;
+        var height = host ? host.clientHeight : window.innerHeight;
+        return top + Math.min(104, Math.max(56, height * 0.16));
+    }
+    function scrollBySyncDelta(delta) {
+        if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) return;
+        if (host) host.scrollTop += delta;
+        else window.scrollBy(0, delta);
+    }
+    function sourceRangeTop(line) {
+        if (!sourceTextNode || !sourceLineOffsets.length) return null;
+        var index = Math.max(0, Math.min(sourceLineOffsets.length - 1, Math.floor(line) - 1));
+        var offset = Math.min(sourceLineOffsets[index], sourceTextNode.nodeValue.length);
+        var range = document.createRange();
+        var end = offset < sourceTextNode.nodeValue.length ? offset + 1 : offset;
+        var start = end === offset && offset > 0 ? offset - 1 : offset;
+        range.setStart(sourceTextNode, start);
+        range.setEnd(sourceTextNode, end);
+        var rect = range.getBoundingClientRect();
+        return rect && rect.height ? rect.top : null;
+    }
+    function sourceLineAtY(y) {
+        if (!sourceTextNode || !sourceLineOffsets.length) return 1;
+        var lo = 0, hi = sourceLineOffsets.length - 1, best = 0;
+        while (lo <= hi) {
+            var mid = (lo + hi) >> 1;
+            var top = sourceRangeTop(mid + 1);
+            if (top !== null && top <= y) { best = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return best + 1;
+    }
+    function blockAtY(y) {
+        var x = host
+            ? host.getBoundingClientRect().left + Math.max(24, Math.min(host.clientWidth - 24, host.clientWidth * 0.4))
+            : window.innerWidth * 0.4;
+        var stack = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [document.elementFromPoint(x, y)];
+        for (var i = 0; i < stack.length; i++) {
+            var found = stack[i] && stack[i].closest && stack[i].closest('[data-md-start-line]');
+            if (found && document.querySelector('.markdown-container').contains(found)) return found;
+        }
+        var best = null, bestDistance = Infinity, bestHeight = Infinity;
+        syncBlocks.forEach(function (entry) {
+            var rect = entry.el.getBoundingClientRect();
+            if (!rect.height) return;
+            var distance = y < rect.top ? rect.top - y : (y > rect.bottom ? y - rect.bottom : 0);
+            if (distance < bestDistance || (distance === bestDistance && rect.height < bestHeight)) {
+                best = entry.el; bestDistance = distance; bestHeight = rect.height;
+            }
+        });
+        return best;
+    }
+    function renderedPositionAtY(y) {
+        var el = blockAtY(y);
+        if (!el) return { line: 1 };
+        var start = Number(el.getAttribute('data-md-start-line')) || 1;
+        var end = Number(el.getAttribute('data-md-end-line')) || start;
+        var rect = el.getBoundingClientRect();
+        var ratio = rect.height > 0 ? Math.max(0, Math.min(1, (y - rect.top) / rect.height)) : 0;
+        return { line: Math.round(start + (end - start) * ratio) };
+    }
+    function blockForSourceLine(line) {
+        var lo = 0, hi = syncBlocks.length - 1, best = -1;
+        while (lo <= hi) {
+            var mid = (lo + hi) >> 1;
+            if (syncBlocks[mid].start <= line) { best = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        for (var i = best; i >= 0; i--) {
+            if (syncBlocks[i].end >= line) return syncBlocks[i];
+        }
+        return best >= 0 ? syncBlocks[best] : (syncBlocks[0] || null);
+    }
+    function showSourceAtLine(line, y) {
+        var top = sourceRangeTop(line);
+        if (top !== null) scrollBySyncDelta(top - y);
+    }
+    function showRenderedAtLine(line, y) {
+        var entry = blockForSourceLine(line);
+        if (!entry) return;
+        var rect = entry.el.getBoundingClientRect();
+        var ratio = entry.end > entry.start
+            ? Math.max(0, Math.min(1, (line - entry.start) / (entry.end - entry.start)))
+            : 0;
+        scrollBySyncDelta(rect.top + ratio * rect.height - y);
+    }
+    function toggleSourceView() {
+        var toSource = !body.classList.contains('view-source');
+        var y = syncViewportY();
+        var line = toSource ? renderedPositionAtY(y).line : sourceLineAtY(y);
+        body.classList.toggle('view-source', toSource);
+        $('source-toggle-btn').title = toSource ? 'Show rendered view' : 'View raw Markdown source';
+        requestAnimationFrame(function () {
+            if (toSource) showSourceAtLine(line, y);
+            else showRenderedAtLine(line, y);
+            if (toSource) {
+                sourcePane && sourcePane.setAttribute('aria-label', 'Markdown source, synchronized with rendered position');
+            }
+        });
+    }
     function setCollapsed(c) {
         body.classList.toggle('sidebar-collapsed', c);
         store.set('mdview.sidebarCollapsed', c ? '1' : '0');
