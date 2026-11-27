@@ -143,8 +143,10 @@
         var index = Math.max(0, Math.min(sourceLineOffsets.length - 1, Math.floor(line) - 1));
         var offset = Math.min(sourceLineOffsets[index], sourceTextNode.nodeValue.length);
         var range = document.createRange();
-        range.setStart(sourceTextNode, offset);
-        range.collapse(true);
+        var end = offset < sourceTextNode.nodeValue.length ? offset + 1 : offset;
+        var start = end === offset && offset > 0 ? offset - 1 : offset;
+        range.setStart(sourceTextNode, start);
+        range.setEnd(sourceTextNode, end);
         var rect = range.getBoundingClientRect();
         return rect && rect.height ? rect.top : null;
     }
