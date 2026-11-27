@@ -426,6 +426,16 @@ mark { background: #bb800966; color: inherit; padding: 0 .15em; border-radius: 2
 #find-bar button { background: transparent; color: var(--text-muted); border: 1px solid var(--border-default); border-radius: 4px; cursor: pointer; padding: 2px 8px; }
 #find-bar button:hover { color: var(--text-primary); }
 #find-bar.miss input { border-color: #f85149; }
+
+/* Search matches remain visible without taking focus or replacing the input selection. */
+::highlight(mdview-find-matches) {
+    background-color: #d2992266;
+    color: inherit;
+}
+::highlight(mdview-find-current) {
+    background-color: #f0b429;
+    color: #161b22;
+}
 .error-page { padding: 40px; color: #ff7b72; font-family: Consolas, monospace; white-space: pre-wrap; }
 span.math-display { display: block; }
 span.remote-image-blocked { display: block; }
