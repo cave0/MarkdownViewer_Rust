@@ -577,36 +577,184 @@
     // ---- find in page (Ctrl+F) ----------------------------------------------------------------
     var bar = document.createElement('div');
     bar.id = 'find-bar';
-    bar.innerHTML = '<input type="text" placeholder="Find in page" spellcheck="false"><button type="button" title="Previous (Shift+Enter)">\u2191</button><button type="button" title="Next (Enter)">\u2193</button><button type="button" title="Close (Esc)">\u2715</button>';
+    bar.innerHTML = '<input type="text" placeholder="Find in page" spellcheck="off" autocomplete="off" aria-label="Find in page">' +
+        '<button type="button" title="Previous (Shift+Enter or ArrowUp)" aria-label="Previous match">\u2191</button>' +
+        '<button type="button" title="Next (Enter or ArrowDown)" aria-label="Next match">\u2193</button>' +
+        '<button type="button" title="Close (Esc)" aria-label="Close Find">\u2715</button>';
     body.appendChild(bar);
     var fin = bar.querySelector('input'), fb = bar.querySelectorAll('button');
-    function find(back) {
-        // window.find() can move focus from this input to the matched document text.
-        // Save and restore the input selection so incremental typing keeps working.
-        var start = fin.selectionStart;
-        var end = fin.selectionEnd;
+    var findRoot = document.querySelector('.markdown-container') || body;
+    var findIndex = null, findQuery = '', findMatches = [], findActive = -1;
+    var FIND_ALL = 'mdview-find-matches', FIND_CURRENT = 'mdview-find-current';
 
-        if (!fin.value) {
+    function clearFindHighlights() {
+        if (window.CSS && CSS.highlights) {
+            CSS.highlights.delete(FIND_ALL);
+            CSS.highlights.delete(FIND_CURRENT);
+        }
+    }
+
+    // Build one searchable text stream while retaining offsets back to real DOM text nodes.
+    // Inline elements are joined naturally; block boundaries are separated so a query cannot
+    // accidentally match the end of one paragraph and the start of the next.
+    function buildFindIndex() {
+        var walker = document.createTreeWalker(findRoot, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (node) {
+                var p = node.parentElement;
+                if (!p || !node.nodeValue || p.closest(
+                    'script,style,noscript,textarea,button,input,select,option,[hidden],[aria-hidden="true"],' +
+                    '.raw-source-view,.mdview-sidebar,.turn-tools,.dgm-tools,.tex-copy,.security-warning-banner'
+                )) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        });
+        var raw = '', segments = [], previousBlock = null, node;
+        while ((node = walker.nextNode())) {
+            var block = node.parentElement.closest(
+                'p,h1,h2,h3,h4,h5,h6,pre,li,td,th,dt,dd,blockquote,summary,figcaption,.code-block-container'
+            ) || findRoot;
+            if (previousBlock && block !== previousBlock) raw += '\n';
+            var start = raw.length;
+            raw += node.nodeValue;
+            if (raw.length > start) segments.push({ node: node, start: start, end: raw.length });
+            previousBlock = block;
+        }
+
+        // Lowercase per Unicode code point and map every folded UTF-16 unit back to its source
+        // range. This keeps DOM offsets correct even when lowercase changes a character's length.
+        var folded = '', sourceStarts = [], sourceEnds = [];
+        for (var i = 0; i < raw.length;) {
+            var ch = String.fromCodePoint(raw.codePointAt(i));
+            var lower = ch.toLowerCase();
+            for (var j = 0; j < lower.length; j++) {
+                sourceStarts.push(i);
+                sourceEnds.push(i + ch.length);
+            }
+            folded += lower;
+            i += ch.length;
+        }
+        return { folded: folded, sourceStarts: sourceStarts, sourceEnds: sourceEnds, segments: segments };
+    }
+
+    function segmentAt(offset) {
+        var lo = 0, hi = findIndex.segments.length - 1;
+        while (lo <= hi) {
+            var mid = (lo + hi) >> 1, seg = findIndex.segments[mid];
+            if (offset < seg.start) hi = mid - 1;
+            else if (offset >= seg.end) lo = mid + 1;
+            else return seg;
+        }
+        return null;
+    }
+
+    function rangeForOffsets(start, end) {
+        var first = segmentAt(start), last = segmentAt(end - 1);
+        if (!first || !last) return null;
+        var range = document.createRange();
+        range.setStart(first.node, start - first.start);
+        range.setEnd(last.node, end - last.start);
+        return range;
+    }
+
+    function paintFindHighlights() {
+        clearFindHighlights();
+        if (!findMatches.length || typeof Highlight !== 'function' || !CSS.highlights) return;
+        var all = new Highlight();
+        for (var i = 0; i < findMatches.length; i++) all.add(findMatches[i]);
+        CSS.highlights.set(FIND_ALL, all);
+        CSS.highlights.set(FIND_CURRENT, new Highlight(findMatches[findActive]));
+    }
+
+    function revealFindMatch(range) {
+        var rect = range.getBoundingClientRect();
+        if (!rect.width && !rect.height) return;
+        if (host) {
+            var viewport = host.getBoundingClientRect();
+            if (rect.top < viewport.top + 52) host.scrollTop -= viewport.top + 52 - rect.top;
+            else if (rect.bottom > viewport.bottom - 36) host.scrollTop += rect.bottom - (viewport.bottom - 36);
+        } else {
+            if (rect.top < 52) window.scrollBy(0, rect.top - 52);
+            else if (rect.bottom > window.innerHeight - 36) window.scrollBy(0, rect.bottom - (window.innerHeight - 36));
+        }
+    }
+
+    function runFindQuery() {
+        var query = fin.value.toLowerCase();
+        findQuery = fin.value;
+        findMatches = [];
+        findActive = -1;
+        clearFindHighlights();
+
+        if (!query) {
             bar.classList.remove('miss');
             return;
         }
-
-        var ok = window.find(fin.value, false, !!back, true, false, false, false);
-        bar.classList.toggle('miss', !ok);
-
-        fin.focus({ preventScroll: true });
-        if (start !== null && end !== null) {
-            fin.setSelectionRange(start, end);
+        if (!findIndex) findIndex = buildFindIndex();
+        if (!window.CSS || !CSS.highlights || typeof Highlight !== 'function') {
+            bar.classList.add('miss');
+            return;
         }
+
+        var at = 0, maxMatches = 10000;
+        while ((at = findIndex.folded.indexOf(query, at)) !== -1 && findMatches.length < maxMatches) {
+            var start = findIndex.sourceStarts[at];
+            var end = findIndex.sourceEnds[at + query.length - 1];
+            var range = rangeForOffsets(start, end);
+            if (range) findMatches.push(range);
+            at += Math.max(1, query.length);
+        }
+
+        bar.classList.toggle('miss', findMatches.length === 0);
+        if (!findMatches.length) return;
+
+        // Start at the first match at or below the current viewport, wrapping to the first.
+        var viewportTop = host ? host.getBoundingClientRect().top : 0;
+        findActive = 0;
+        for (var m = 0; m < findMatches.length; m++) {
+            if (findMatches[m].getBoundingClientRect().bottom >= viewportTop + 8) {
+                findActive = m;
+                break;
+            }
+        }
+        paintFindHighlights();
+        revealFindMatch(findMatches[findActive]);
     }
-    function openFind() { bar.classList.add('open'); fin.focus(); fin.select(); }
-    function closeFind() { bar.classList.remove('open', 'miss'); focusContent(); }
+
+    function moveFind(direction) {
+        if (!fin.value) return;
+        if (findQuery !== fin.value) runFindQuery();
+        else if (findMatches.length) {
+            findActive = (findActive + direction + findMatches.length) % findMatches.length;
+            paintFindHighlights();
+            revealFindMatch(findMatches[findActive]);
+        }
+        // Clicking a toolbar arrow must not steal keyboard focus from the query input.
+        fin.focus({ preventScroll: true });
+    }
+
+    function openFind() {
+        bar.classList.add('open');
+        fin.focus();
+        fin.select();
+        runFindQuery();
+    }
+    function closeFind() {
+        bar.classList.remove('open', 'miss');
+        clearFindHighlights();
+        findMatches = [];
+        findActive = -1;
+        focusContent();
+    }
     fin.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); find(e.shiftKey); }
+        if (e.key === 'Enter') { e.preventDefault(); moveFind(e.shiftKey ? -1 : 1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); moveFind(-1); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); moveFind(1); }
         else if (e.key === 'Escape') closeFind();
     });
-    fin.addEventListener('input', function () { find(false); });
-    fb[0].onclick = function () { find(true); }; fb[1].onclick = function () { find(false); }; fb[2].onclick = closeFind;
+    fin.addEventListener('input', runFindQuery);
+    fb[0].onclick = function () { moveFind(-1); };
+    fb[1].onclick = function () { moveFind(1); };
+    fb[2].onclick = closeFind;
     onKey(function (e) { return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f'; }, openFind);
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeFind(); });
 
