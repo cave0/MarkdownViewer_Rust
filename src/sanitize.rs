@@ -59,8 +59,8 @@ impl Sanitizer {
             i += rel;
             let rest = &input[i..];
             // comments, doctype, processing instructions, CDATA: dropped
-            if rest.starts_with("<!--") {
-                match rest[4..].find("-->") {
+            if let Some(comment) = rest.strip_prefix("<!--") {
+                match comment.find("-->") {
                     Some(e) => i += 4 + e + 3,
                     None => return,
                 }
@@ -189,10 +189,8 @@ impl Sanitizer {
                 continue;
             }
             let val = decode_entities(v.as_deref().unwrap_or(""));
-            if matches!(k.as_str(), "href" | "src" | "srcset") {
-                if !self.url_ok(canon, k, &val) {
-                    continue;
-                }
+            if matches!(k.as_str(), "href" | "src" | "srcset") && !self.url_ok(canon, k, &val) {
+                continue;
             }
             out.push(' ');
             out.push_str(k);
@@ -225,7 +223,7 @@ impl Sanitizer {
         if norm.contains('&') && norm.find('&') < norm.find(['/', '?', '#']) {
             return false; // undecoded entity before the path starts: could hide a scheme
         }
-        let scheme_end = norm.find(|c| matches!(c, ':' | '/' | '?' | '#'));
+        let scheme_end = norm.find([':', '/', '?', '#']);
         let has_scheme = matches!(scheme_end, Some(p) if norm.as_bytes()[p] == b':');
         if !has_scheme {
             return true; // relative URL or fragment
@@ -242,7 +240,10 @@ impl Sanitizer {
 }
 
 /// Parse attributes up to and including the closing '>'. Returns None if the tag never closes.
-fn parse_attrs(s: &str) -> Option<(Vec<(String, Option<String>)>, usize)> {
+type HtmlAttr = (String, Option<String>);
+type ParsedAttrs = (Vec<HtmlAttr>, usize);
+
+fn parse_attrs(s: &str) -> Option<ParsedAttrs> {
     let b = s.as_bytes();
     let mut i = 0;
     let mut attrs = Vec::new();

@@ -20,7 +20,7 @@ fn depths(toc: &[Heading]) -> Vec<usize> {
     let mut stack: Vec<u8> = Vec::new();
     toc.iter()
         .map(|h| {
-            while stack.last().map_or(false, |l| *l > h.level) {
+            while stack.last().is_some_and(|l| *l > h.level) {
                 stack.pop();
             }
             if stack.last().map_or(true, |l| *l < h.level) {
@@ -201,6 +201,13 @@ mod tests {
         let p = build(&d, "t", "", false, false);
         assert_eq!(p.matches("<ul>").count(), p.matches("</ul>").count());
         assert_eq!(p.matches("<li>").count(), p.matches("</li>").count());
+    }
+
+    #[test]
+    fn embedded_css_keeps_svg_frame_transparent() {
+        // SVG fences are dark-mode images with their own background; a white frame around them was a regression.
+        assert!(!STYLE.contains(".svg-render { background: #fff"));
+        assert!(STYLE.contains(".svg-render { background: transparent"));
     }
 
     #[test]

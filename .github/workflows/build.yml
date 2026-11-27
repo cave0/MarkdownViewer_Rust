@@ -20,7 +20,7 @@ env:
 jobs:
   test:
     name: test (linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -31,10 +31,14 @@ jobs:
       - run: cargo test --locked
 
   ui:
-    name: ui tests (headless chromium)
-    runs-on: ubuntu-latest
+    name: ui tests (Rust renderer + headless chromium)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build actual Rust renderer
+        run: cargo build --locked
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -62,11 +66,10 @@ jobs:
           path: target/release/mdview.exe
           if-no-files-found: error
 
-  # Advisory only: reports style, lint and dependency-advisory findings without blocking the build.
+  # Clippy is required. Formatting remains advisory until existing repository-wide drift is cleaned up.
   lint:
-    name: lint (advisory)
-    runs-on: ubuntu-latest
-    continue-on-error: true
+    name: lint (required)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -76,14 +79,21 @@ jobs:
       - run: cargo fmt --check
         continue-on-error: true
       - run: cargo clippy --locked --all-targets -- -D warnings
-        continue-on-error: true
-      - run: cargo install cargo-audit --locked && cargo audit
-        continue-on-error: true
+
+  audit:
+    name: dependency audit (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
 
   release:
     name: release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, ui, windows]
+    needs: [test, ui, windows, lint]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -93,7 +103,7 @@ jobs:
           name: mdview-windows-x64
       - name: Checksum
         run: sha256sum mdview.exe > mdview.exe.sha256
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             mdview.exe
