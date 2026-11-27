@@ -148,13 +148,15 @@ const regressions = await regressionPage.evaluate(() => {
     ids: headings.map((h) => h.id),
     indentedCodeKeepsMathDelimiters: code.includes('\\(do not typeset this)'),
     actualMathRendered: !!document.querySelector('.math-inline .katex'),
-    injectedScriptAbsent: !document.querySelector('#mdview-injected-script')
+    injectedScriptAbsent: !document.querySelector('#mdview-injected-script'),
+    noFalsePositiveChatTurns: document.querySelectorAll('.markdown-container > .turn').length === 0
   };
 });
 check('explicit and generated heading IDs do not collide', new Set(regressions.ids).size === regressions.ids.length, JSON.stringify(regressions.ids));
 check('math delimiters inside indented code remain literal', regressions.indentedCodeKeepsMathDelimiters, JSON.stringify(regressions));
 check('real inline math is typeset by KaTeX', regressions.actualMathRendered, JSON.stringify(regressions));
 check('Safe Mode removes raw script elements', regressions.injectedScriptAbsent, JSON.stringify(regressions));
+check('ordinary technical headings do not become chat turns', regressions.noFalsePositiveChatTurns, JSON.stringify(regressions));
 check('regression fixture has no uncaught page errors', regressionErrors.length === 0, regressionErrors.join(' | '));
 await regressionPage.close();
 

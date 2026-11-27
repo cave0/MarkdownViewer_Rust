@@ -313,41 +313,105 @@ impl U16Counter {
     }
 }
 
-/// Is this heading / bold label a chat speaker ("User", "You said:", "🤖 Assistant", "Claude (Opus)")?
+/// Identify an explicit chat speaker label without treating ordinary headings as turns.
+///
+/// Bare "User" and "Assistant" headings are retained for common exported chat logs. Other role
+/// aliases require an exact trailing colon, while model-qualified names and "You said:"-style
+/// labels have their own narrow grammars. A hyphen is never a generic delimiter: "Human-in-the-
+/// Loop" and "User-facing" are ordinary words, not speaker labels.
 fn role_of(text: &str) -> Option<&'static str> {
     let t = text.trim();
     if t.is_empty() || t.chars().count() > 80 {
         return None;
     }
+
+    // Allow a leading emoji/icon (for example, "🤖 Assistant") but parse the role token itself
+    // as a complete word. The remainder is validated below rather than accepting punctuation
+    // as a generic separator.
     let t = t.trim_start_matches(|c: char| !c.is_alphanumeric());
     let lower = t.to_lowercase();
     let first_len = lower.find(|c: char| !c.is_alphanumeric()).unwrap_or(lower.len());
     let (first, rest) = lower.split_at(first_len);
-    let rest = rest.trim_start();
-    let role = match first {
-        "user" | "you" | "me" | "human" | "prompt" | "question" | "query" | "myself" => "user",
+
+    let (role, is_model) = match first {
+        "user" | "you" | "me" | "human" | "prompt" | "question" | "query" | "myself" => ("user", false),
         "assistant" | "ai" | "claude" | "chatgpt" | "gpt" | "gemini" | "bard" | "grok" | "deepseek" | "copilot"
         | "llama" | "mistral" | "qwen" | "kimi" | "perplexity" | "model" | "bot" | "response" | "reply" | "answer"
-        | "openai" | "anthropic" => "assistant",
-        "system" | "developer" => "system",
-        "q" | "a" if rest.starts_with(':') => {
-            if first == "q" { "user" } else { "assistant" }
-        }
+        | "openai" | "anthropic" => (
+            "assistant",
+            matches!(
+                first,
+                "claude"
+                    | "chatgpt"
+                    | "gpt"
+                    | "gemini"
+                    | "bard"
+                    | "grok"
+                    | "deepseek"
+                    | "copilot"
+                    | "llama"
+                    | "mistral"
+                    | "qwen"
+                    | "kimi"
+                    | "perplexity"
+            ),
+        ),
+        "system" | "developer" => ("system", false),
+        "q" if rest == ":" || rest == "：" => return Some("user"),
+        "a" if rest == ":" || rest == "：" => return Some("assistant"),
         _ => return None,
     };
+
+    // Only these two unadorned headings are sufficiently distinctive to retain as chat turns.
+    // Generic words such as "System", "Model", "Prompt", and "Answer" need explicit labeling.
     if rest.is_empty() {
+        return matches!(first, "user" | "assistant").then_some(role);
+    }
+
+    // Explicit role label: "Human:", "System:", "Claude:", "Prompt:", etc.
+    if rest == ":" || rest == "：" {
         return Some(role);
     }
-    if rest.starts_with(|c: char| matches!(c, ':' | '(' | '[' | '-' | '\u{2013}' | '\u{2014}' | '|' | '\u{b7}' | '\u{2022}' | '@' | '/' | '#' | '*' | '>' | '.' | ',' | '\u{ff1a}') || c.is_ascii_digit()) {
-        return Some(role);
+
+    // Natural-language transcript labels must be an exact speaker phrase, not merely a title
+    // beginning with "User said..." or "Claude wrote...".
+    if let Some(suffix) = rest.strip_prefix(' ').and_then(|s| s.strip_suffix(':')) {
+        if matches!(suffix, "said" | "says" | "wrote" | "asked" | "replied") {
+            return Some(role);
+        }
     }
-    let w = rest.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("");
-    const OK: &[&str] = &[
-        "said", "says", "wrote", "asked", "replied", "message", "input", "output", "turn", "prompt", "query", "question",
-        "response", "reply", "answer", "pro", "flash", "opus", "sonnet", "haiku", "ultra", "plus", "turbo", "thinking",
-        "mini", "max", "instant", "preview",
+
+    // Preserve explicit model-qualified labels such as "Claude (Opus 4)" and
+    // "Gemini (Flash 2.5)", but do not accept arbitrary parenthetical heading text.
+    if is_model {
+        if let Some(variant) = rest.strip_prefix(" (").and_then(|s| s.strip_suffix(')')) {
+            if is_model_variant(variant) {
+                return Some(role);
+            }
+        }
+    }
+
+    None
+}
+
+/// Accept only known model-family qualifiers, optionally followed by numeric version tokens.
+fn is_model_variant(variant: &str) -> bool {
+    let mut words = variant.split_whitespace();
+    let Some(first) = words.next() else {
+        return false;
+    };
+    const QUALIFIERS: &[&str] = &[
+        "opus", "sonnet", "haiku", "pro", "flash", "ultra", "plus", "turbo", "thinking", "mini", "max", "instant",
+        "preview",
     ];
-    OK.contains(&w).then_some(role)
+    if !QUALIFIERS.contains(&first) {
+        return false;
+    }
+    words.all(|word| {
+        QUALIFIERS.contains(&word)
+            || (word.chars().any(|c| c.is_ascii_digit())
+                && word.chars().all(|c| c.is_ascii_digit() || c == '.'))
+    })
 }
 
 fn count_words(s: &str) -> usize {
@@ -999,16 +1063,123 @@ mod tests {
     }
 
     #[test]
-    fn role_heuristics_avoid_false_positives() {
-        for ok in ["User", "You said:", "🤖 Assistant", "Claude (Opus 4)", "ChatGPT said:", "Human:", "Gemini Pro", "Q:", "System prompt", "Me"] {
+    fn role_heuristics_require_explicit_speaker_labels() {
+        for ok in [
+            "User",
+            "Assistant",
+            "🤖 Assistant",
+            "You said:",
+            "Claude (Opus 4)",
+            "Gemini (Flash 2.5)",
+            "ChatGPT said:",
+            "Human:",
+            "Gemini:",
+            "Prompt:",
+            "Question:",
+            "Query:",
+            "System:",
+            "Developer:",
+            "Q:",
+            "A:",
+        ] {
             assert!(role_of(ok).is_some(), "{ok}");
         }
-        for no in ["Model selection and trade-offs", "User guide", "Answering questions", "Q&A", "A new hope", "Assistants in healthcare", "You can do it", ""] {
+
+        for no in [
+            "Human-in-the-Loop Script Protocol",
+            "User-facing API Design",
+            "Assistant-driven Workflow",
+            "System-level Architecture",
+            "Developer-oriented Guide",
+            "Prompt-injection Attacks",
+            "AI-assisted Tooling",
+            "Claude-based Workflow",
+            "GPT-4 Migration Notes",
+            "User Input Validation",
+            "User Prompt Design",
+            "User Query Processing",
+            "Assistant Output Formatting",
+            "Assistant Response Architecture",
+            "Model Input Pipeline",
+            "Model Output Schema",
+            "System Prompt Design",
+            "System Message Format",
+            "Model: Architecture Overview",
+            "User: Guide",
+            "User (Guide)",
+            "Assistant (API Design)",
+            "System / Architecture",
+            "Model #2 Design",
+            "User | Permissions",
+            "Prompt",
+            "Question",
+            "Query",
+            "Human",
+            "Model",
+            "Answer",
+            "Response",
+            "Developer",
+            "System",
+            "Gemini Pro",
+            "Me",
+            "Model selection and trade-offs",
+            "User guide",
+            "Answering questions",
+            "Q&A",
+            "A new hope",
+            "Assistants in healthcare",
+            "You can do it",
+            "",
+        ] {
             assert!(role_of(no).is_none(), "{no}");
         }
-        let d = render("- **User:** inside a list\n\n> **You:** in a quote\n", SAFE);
-        assert_eq!(d.turns, 0);
-        assert!(d.turn_source.is_none());
+    }
+
+    #[test]
+    fn ordinary_technical_headings_never_start_chat_turns() {
+        let src = "# Documentation
+
+## Human-in-the-Loop Script Protocol
+
+## User-facing API Design
+
+## Assistant-driven Workflow
+
+## System-level Architecture
+
+## Developer-oriented Guide
+
+## Prompt-injection Attacks
+
+## AI-assisted Tooling
+
+## Claude-based Workflow
+
+## GPT-4 Migration Notes
+
+## User Input Validation
+
+## Assistant Response Architecture
+
+## Model: Architecture Overview
+
+## System Prompt Design
+
+## Model
+
+## Answer
+";
+        let d = render(src, SAFE);
+        assert_eq!(d.turns, 0, "{}", d.body);
+        assert!(d.toc.iter().all(|h| h.role.is_none()), "{:?}", d.toc.iter().map(|h| &h.title).collect::<Vec<_>>());
+        assert!(!d.body.contains("data-role="), "{}", d.body);
+    }
+
+    #[test]
+    fn explicit_bold_speaker_labels_still_start_turns() {
+        let d = render("**Human:** hello\n\n**You said:** good-bye\n", SAFE);
+        assert_eq!(d.turns, 2, "{}", d.body);
+        assert!(d.body.contains("data-role=\"user\""));
     }
 
     #[test]
