@@ -267,6 +267,18 @@ fn asset_type(name: &str) -> &'static str {
     }
 }
 
+
+/// Accept navigation only to mdview's exact internal origin. Deliberately rejects
+/// credentials, non-default ports, suffix domains and alternate schemes.
+pub fn is_internal_url(raw: &str) -> bool {
+    let Some((scheme, rest)) = raw.split_once("://") else { return false };
+    if !scheme.eq_ignore_ascii_case("http") {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    authority.eq_ignore_ascii_case("mdview.localhost")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +297,32 @@ mod tests {
     }
     fn rand_id() -> u128 {
         SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos()
+    }
+
+    #[test]
+    fn internal_navigation_requires_an_exact_origin() {
+        for allowed in [
+            "http://mdview.localhost/",
+            "http://MDVIEW.LOCALHOST/document.md",
+            "http://mdview.localhost?query=1",
+        ] {
+            assert!(is_internal_url(allowed), "{allowed}");
+        }
+        for rejected in [
+            "https://mdview.localhost/",
+            "http://mdview.localhost.evil.example/",
+            "http://evilmdview.localhost/",
+            "http://mdview.localhost@evil.example/",
+            "http://user@mdview.localhost/",
+            "http://mdview.localhost:8080/",
+            "http://mdview.localhost:80/",
+            "http://mdview.localhost./",
+            "http:\\mdview.localhost\\evil.example/",
+            "javascript:alert(1)",
+            "about:blank",
+        ] {
+            assert!(!is_internal_url(rejected), "{rejected}");
+        }
     }
 
     #[test]

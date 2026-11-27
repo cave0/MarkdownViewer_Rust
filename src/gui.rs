@@ -1,6 +1,6 @@
 //! Windows front end: tao window + WebView2 (via wry), custom `mdview://` protocol, live reload.
 
-use crate::site::{file_sig, is_md, Site, MD_EXTS};
+use crate::site::{file_sig, is_internal_url, is_md, Site, MD_EXTS};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -190,7 +190,7 @@ fn run_window(site: Arc<Site>) -> Result<(), String> {
             b.body(r.body).unwrap_or_else(|_| Response::new(std::borrow::Cow::Borrowed(&b"error"[..])))
         })
         .with_navigation_handler(|url| {
-            if url.starts_with(ORIGIN) || url == "about:blank" {
+            if is_internal_url(&url) || url == "about:blank" {
                 return true;
             }
             open_external(&url);
@@ -308,7 +308,7 @@ fn open_in(site: &Site, webview: &wry::WebView, file: PathBuf) {
 
 fn open_external(url: &str) {
     let lower = url.to_ascii_lowercase();
-    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") || lower.starts_with("tel:") {
         let _ = open::that_detached(url);
     }
 }

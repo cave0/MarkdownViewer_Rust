@@ -7,7 +7,7 @@ use pulldown_cmark::{
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use pulldown_cmark_escape::{escape_href, escape_html};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 #[derive(Clone, Copy)]
 pub struct RenderOpts {
@@ -53,7 +53,7 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
 
     let mut events: Vec<Event> = Vec::with_capacity(src.len() / 24 + 16);
     let mut toc: Vec<Heading> = Vec::new();
-    let mut slugs: HashMap<String, u32> = HashMap::new();
+    let mut used_ids: HashSet<String> = HashSet::new();
     let mut san = Sanitizer::new(opts.allow_remote_images);
     let mut has_math = false;
 
@@ -191,10 +191,11 @@ pub fn render(src: &str, opts: RenderOpts) -> Doc {
             }
             Event::End(TagEnd::Heading(l)) => {
                 if let Some(h) = heading.take() {
-                    let id = match h.id {
+                    let base_id = match h.id {
                         Some(id) if !id.is_empty() => id,
-                        _ => slugify(&h.text, &mut slugs, h.idx),
+                        _ => slugify(&h.text, h.idx),
                     };
+                    let id = unique_id(&base_id, &mut used_ids);
                     let role = if container_depth == 0 { role_of(&h.text) } else { None };
                     let mut s = format!("<h{} id=\"", h.level);
                     escape_html(&mut s, &id).ok();
@@ -362,7 +363,7 @@ fn count_words(s: &str) -> usize {
     n
 }
 
-pub fn slugify(title: &str, counts: &mut HashMap<String, u32>, fallback: usize) -> String {
+pub fn slugify(title: &str, fallback: usize) -> String {
     let mut slug = String::with_capacity(title.len());
     for c in title.trim().chars() {
         if c.is_alphanumeric() {
@@ -371,14 +372,27 @@ pub fn slugify(title: &str, counts: &mut HashMap<String, u32>, fallback: usize) 
             slug.push('-');
         }
     }
-    let mut slug = slug.trim_matches('-').to_string();
+    let slug = slug.trim_matches('-').to_string();
     if slug.is_empty() {
-        slug = format!("section-{fallback}");
+        format!("section-{fallback}")
+    } else {
+        slug
     }
-    let n = counts.entry(slug.clone()).or_insert(0);
-    let out = if *n == 0 { slug } else { format!("{slug}-{n}") };
-    *n += 1;
-    out
+}
+
+/// Make explicit and generated heading IDs unique in one shared namespace.
+fn unique_id(base: &str, used: &mut HashSet<String>) -> String {
+    if used.insert(base.to_string()) {
+        return base.to_string();
+    }
+    let mut suffix = 1usize;
+    loop {
+        let candidate = format!("{base}-{suffix}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
 }
 
 fn is_remote(url: &str) -> bool {
@@ -546,6 +560,27 @@ fn needs_math_pass(s: &str) -> bool {
     s.contains("$$") || s.contains("\\(") || s.contains("\\[") || s.contains("\\begin{")
 }
 
+/// Detect CommonMark indented code lines, including code nested in block quotes.
+/// Those lines must bypass the math preprocessor just like fenced code blocks do.
+fn is_indented_code_line(line: &str) -> bool {
+    let mut rest = line.trim_end_matches(['\r', '\n']);
+    loop {
+        let leading = rest.trim_start_matches([' ', '\t']);
+        if let Some(after_quote) = leading.strip_prefix('>') {
+            rest = after_quote.strip_prefix(' ').unwrap_or(after_quote);
+            let next = rest.trim_start_matches([' ', '\t']);
+            if next.starts_with('>') {
+                rest = next;
+                continue;
+            }
+        } else {
+            rest = leading;
+        }
+        break;
+    }
+    rest.starts_with('\t') || rest.bytes().take_while(|b| *b == b' ').count() >= 4
+}
+
 /// Make math robust before pulldown-cmark sees it (it has no block-level math, so a line that
 /// is just `=`, `-`, `+`, `1.` or `>` inside `$$ ... $$` would otherwise be parsed as a setext
 /// heading / list / quote and tear the equation apart).
@@ -593,6 +628,14 @@ pub fn preprocess_math(src: &str) -> Cow<'_, str> {
                 i += 1;
                 continue;
             }
+        }
+        // Preserve four-space / tab-indented code exactly; math delimiters inside code are text.
+        if is_indented_code_line(line) {
+            convert_chunk(&chunk, &mut out);
+            chunk.clear();
+            out.push_str(line);
+            i += 1;
+            continue;
         }
         // bare LaTeX environment (\begin{align} ... \end{align}) outside $$: wrap as display math
         {
@@ -793,12 +836,35 @@ mod tests {
     }
 
     #[test]
+    fn explicit_heading_ids_share_the_generated_id_namespace() {
+        let d = render(
+            "# Intro {#intro}\n# Intro\n# Again {#intro}\n# Fourth {#intro-1}\n",
+            SAFE,
+        );
+        let ids: Vec<&str> = d.toc.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["intro", "intro-1", "intro-2", "intro-1-1"]);
+        let unique: HashSet<&str> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len());
+    }
+
+    #[test]
     fn math_is_marked_for_katex() {
         let d = render("inline $a<b$ and\n\n$$\nx^2\n$$\n\nand \\(y\\) and \\[z\\]", SAFE);
         assert!(d.has_math);
         assert!(d.body.contains("<span class=\"math-inline\">a&lt;b</span>"));
         assert_eq!(d.body.matches("math-display").count(), 2);
         assert!(d.body.contains("<span class=\"math-inline\">y</span>"));
+    }
+
+    #[test]
+    fn math_preprocessing_preserves_indented_code_blocks() {
+        let src = "Example:\n\n    \\(x^2 + y^2\\)\n\nActual \\(a^2+b^2\\)";
+        let pre = preprocess_math(src);
+        assert!(pre.contains("    \\(x^2 + y^2\\)"), "{pre}");
+        assert!(pre.contains("Actual $a^2+b^2$"), "{pre}");
+        let d = render(src, SAFE);
+        assert!(d.body.contains("<code>\\(x^2 + y^2\\)"), "{}", d.body);
+        assert!(d.body.contains("class=\"math-inline\""), "{}", d.body);
     }
 
     #[test]
