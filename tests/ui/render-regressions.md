@@ -8,8 +8,8 @@
 
 Indented code must remain literal:
 
-    \\(do not typeset this)
+    \(do not typeset this)
 
-Actual inline math: \\(x^2 + y^2\\).
+Actual inline math: \(x^2 + y^2\).
 
 <script id="mdview-injected-script">window.mdviewInjected = true;</script>

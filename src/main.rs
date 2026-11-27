@@ -154,7 +154,7 @@ fn main() {
                 let source_dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
                 let source_url = site::file_url(source_dir)?;
                 let mut html = String::from_utf8_lossy(&r.body).into_owned();
-                html = html.replace("<head>", &format!("<head><base href=\\"{source_url}\\">"));
+                html = html.replace("<head>", &format!("<head><base href=\"{source_url}\">"));
                 for asset in ["boot.js", "app.js", "katex/katex.min.css"] {
                     let old = format!("/_a/{asset}");
                     let new = format!("{assets_url}{asset}");

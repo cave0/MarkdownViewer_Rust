@@ -102,6 +102,23 @@ check('HTML export refuses to overwrite the Markdown source', protectedSource.st
   fs.readFileSync(fixturePath, 'utf8').startsWith('---'));
 fs.rmSync(exportRoot, { recursive: true, force: true });
 
+const standalonePage = await ctx.newPage();
+const standaloneErrors = [];
+standalonePage.on('pageerror', (e) => standaloneErrors.push(e.message));
+await standalonePage.goto('file://' + exportPath);
+await standalonePage.waitForTimeout(2200);
+const standaloneState = await standalonePage.evaluate(() => ({
+  shellLoaded: !!document.querySelector('#source-toggle-btn'),
+  mathRendered: !!document.querySelector('.math-inline .katex'),
+  diagramRendered: !!document.querySelector('pre.mermaid svg')
+}));
+check('exported HTML opens directly as a local file', standaloneState.shellLoaded, JSON.stringify(standaloneState));
+check('exported HTML loads its offline KaTeX runtime', standaloneState.mathRendered, JSON.stringify(standaloneState));
+check('exported HTML loads its offline Mermaid runtime', standaloneState.diagramRendered, JSON.stringify(standaloneState));
+check('standalone file has no uncaught page errors', standaloneErrors.length === 0, standaloneErrors.join(' | '));
+await standalonePage.close();
+
+
 // ---- actual Rust renderer integration ---------------------------------------------------------------
 const rendererPage = await page1.evaluate(() => {
   const headings = [...document.querySelectorAll('.markdown-container h1[id], .markdown-container h2[id], .markdown-container h3[id], .markdown-container h4[id], .markdown-container h5[id], .markdown-container h6[id]')];

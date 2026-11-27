@@ -273,7 +273,8 @@ fn asset_type(name: &str) -> &'static str {
 /// Convert an existing filesystem path to an absolute file:// URL.
 pub fn file_url(path: &Path) -> std::io::Result<String> {
     let absolute = std::fs::canonicalize(path)?;
-    let raw = absolute.to_string_lossy().replace('\\', "/");
+    let mut raw = absolute.to_string_lossy().into_owned();
+    if cfg!(windows) { raw = raw.replace('\\', "/"); }
     let encoded = raw
         .split('/')
         .map(|part| utf8_percent_encode(part, FILE_URL_SEG).to_string())
