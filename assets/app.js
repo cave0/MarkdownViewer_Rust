@@ -3,6 +3,14 @@
     'use strict';
     var body = document.body;
     var $ = function (id) { return document.getElementById(id); };
+    var assetScript = document.currentScript;
+    var assetBase = assetScript && assetScript.src
+        ? assetScript.src.slice(0, assetScript.src.lastIndexOf('/') + 1)
+        : '/_a/';
+    function assetUrl(src) {
+        return src.indexOf('/_a/') === 0 ? assetBase + src.slice(4) : src;
+    }
+
     var store = {
         get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
         set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -148,7 +156,7 @@
     function loadScript(src) {
         if (!scriptCache[src]) scriptCache[src] = new Promise(function (res, rej) {
             var s = document.createElement('script');
-            s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s);
+            s.src = assetUrl(src); s.onload = res; s.onerror = rej; document.head.appendChild(s);
         });
         return scriptCache[src];
     }
@@ -425,7 +433,9 @@
         input.focus(); render();
         fetch('/_files', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { files = j; render(); }, function () { files = []; render(); });
     }
-    onKey(function (e) { return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e'; }, openQuick);
+    if (location.protocol !== 'file:') {
+        onKey(function (e) { return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e'; }, openQuick);
+    }
 
     // ---- click an image to view it full size --------------------------------------------------
     document.addEventListener('click', function (e) {

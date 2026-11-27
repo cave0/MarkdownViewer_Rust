@@ -78,26 +78,31 @@ pub fn report(title: &str, text: &str) {
 }
 
 
-fn dump_output_is_input(input: &std::path::Path, output: &std::path::Path) -> std::io::Result<bool> {
-    let input = std::fs::canonicalize(input)?;
-    let absolute_output = if output.is_absolute() {
+fn absolute_output_path(output: &std::path::Path) -> std::io::Result<PathBuf> {
+    let absolute = if output.is_absolute() {
         output.to_path_buf()
     } else {
         std::env::current_dir()?.join(output)
     };
+    if absolute.exists() {
+        return std::fs::canonicalize(absolute);
+    }
+    let name = absolute.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no filename")
+    })?;
+    let parent = absolute.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    Ok(std::fs::canonicalize(parent)?.join(name))
+}
 
-    let resolved_output = if absolute_output.exists() {
-        std::fs::canonicalize(&absolute_output)?
-    } else {
-        let name = absolute_output.file_name().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no filename")
-        })?;
-        let parent = absolute_output.parent().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no parent directory")
-        })?;
-        std::fs::canonicalize(parent)?.join(name)
-    };
-    Ok(input == resolved_output)
+fn dump_output_is_input(input: &std::path::Path, output: &std::path::Path) -> std::io::Result<bool> {
+    Ok(std::fs::canonicalize(input)? == absolute_output_path(output)?)
+}
+
+fn companion_asset_dir(output: &std::path::Path) -> std::io::Result<PathBuf> {
+    let name = output.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no filename")
+    })?;
+    Ok(output.with_file_name(format!("{}.assets", name.to_string_lossy())))
 }
 
 fn main() {
@@ -141,7 +146,31 @@ fn main() {
             use std::io::Write;
             std::io::stdout().write_all(&r.body)
         } else {
-            std::fs::write(out, &r.body)
+            let output = absolute_output_path(std::path::Path::new(out))?;
+            let assets = companion_asset_dir(&output)?;
+            if let Err(e) = site::write_embedded_assets(&assets) {
+                report("mdview", &format!("Cannot write companion assets {}: {e}", assets.display()));
+                std::process::exit(1);
+            }
+            let assets_url = match site::file_url(&assets) {
+                Ok(u) => u,
+                Err(e) => {
+                    report("mdview", &format!("Cannot resolve companion assets: {e}"));
+                    std::process::exit(1);
+                }
+            };
+            let source_dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let source_url = match site::file_url(source_dir) {
+                Ok(u) => u,
+                Err(e) => {
+                    report("mdview", &format!("Cannot resolve source directory: {e}"));
+                    std::process::exit(1);
+                }
+            };
+            let mut html = String::from_utf8_lossy(&r.body).into_owned();
+            html = html.replace("<head>", &format!("<head><base href=\\"{source_url}\\">"));
+            html = html.replace("/_a/", &assets_url);
+            std::fs::write(output, html)
         };
         if let Err(e) = res {
             report("mdview", &format!("Cannot write {out}: {e}"));
