@@ -7,4 +7,3 @@
 .vscode/
 Thumbs.db
 /tests/ui/node_modules/
-/tests/ui/package-lock.json

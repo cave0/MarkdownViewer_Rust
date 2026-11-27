@@ -68,9 +68,8 @@ jobs:
 
   # Advisory only: reports style, lint and dependency-advisory findings without blocking the build.
   lint:
-    name: lint (advisory)
+    name: lint (required)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -78,11 +77,17 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
-        continue-on-error: true
       - run: cargo clippy --locked --all-targets -- -D warnings
-        continue-on-error: true
-      - run: cargo install cargo-audit --locked && cargo audit
-        continue-on-error: true
+
+  audit:
+    name: dependency audit (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
 
   release:
     name: release

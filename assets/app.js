@@ -194,10 +194,17 @@
         }
     });
     var mermaidQueue = Promise.resolve();
+    function showMermaidError(el) {
+        if (el.querySelector('.mermaid-error')) return;
+        var msg = document.createElement('div');
+        msg.className = 'mermaid-error';
+        msg.textContent = 'Diagram could not be rendered. The Mermaid source is preserved above.';
+        el.appendChild(msg);
+    }
     // Very wide diagrams keep a readable scale (75%, max 2400px) and scroll sideways instead of shrinking to fit.
     function decorateDiagram(el, src) {
         var svg = el.querySelector('svg');
-        if (!svg || el.querySelector('.dgm-tools')) return;
+        if (!svg || el.querySelector('.dgm-tools')) return false;
         el.__src = src;
         var vb = svg.viewBox && svg.viewBox.baseVal;
         // only diagrams that would shrink below ~60% get the sideways-scroll treatment; others still fit the page
@@ -210,6 +217,7 @@
             tools.appendChild(b);
         });
         el.appendChild(tools);
+        return true;
     }
     function svgText(svg) {
         var c = svg.cloneNode(true), vb = svg.viewBox.baseVal;
@@ -259,7 +267,9 @@
         var src = el.textContent;
         mermaidQueue = mermaidQueue.then(function () {
             return mermaid.run({ nodes: [el], suppressErrors: true });
-        }).then(function () { decorateDiagram(el, src); }).catch(function () {});
+        }).then(function () {
+            if (!decorateDiagram(el, src)) showMermaidError(el);
+        }).catch(function () { showMermaidError(el); });
     });
     // The toolbar and Ctrl+P paths wait for lazy libraries and async Mermaid renders.
     function printPage() {
