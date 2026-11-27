@@ -77,6 +77,34 @@ pub fn report(title: &str, text: &str) {
     eprintln!("{title}: {text}");
 }
 
+
+fn absolute_output_path(output: &std::path::Path) -> std::io::Result<PathBuf> {
+    let absolute = if output.is_absolute() {
+        output.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(output)
+    };
+    if absolute.exists() {
+        return std::fs::canonicalize(absolute);
+    }
+    let name = absolute.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no filename")
+    })?;
+    let parent = absolute.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    Ok(std::fs::canonicalize(parent)?.join(name))
+}
+
+fn dump_output_is_input(input: &std::path::Path, output: &std::path::Path) -> std::io::Result<bool> {
+    Ok(std::fs::canonicalize(input)? == absolute_output_path(output)?)
+}
+
+fn companion_asset_dir(output: &std::path::Path) -> std::io::Result<PathBuf> {
+    let name = output.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no filename")
+    })?;
+    Ok(output.with_file_name(format!("{}.assets", name.to_string_lossy())))
+}
+
 fn main() {
     let args = match parse_args(std::env::args().skip(1)) {
         Parsed::Run(a) => a,
@@ -101,11 +129,41 @@ fn main() {
         };
         let url = site.url_for(&site.current()).unwrap_or_default();
         let r = site.serve(&url);
+        if out != "-" {
+            match dump_output_is_input(file, std::path::Path::new(out)) {
+                Ok(true) => {
+                    report("mdview", "Refusing to overwrite the input Markdown file with HTML output.");
+                    std::process::exit(2);
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    report("mdview", &format!("Cannot resolve HTML output path: {e}"));
+                    std::process::exit(2);
+                }
+            }
+        }
         let res = if out == "-" {
             use std::io::Write;
             std::io::stdout().write_all(&r.body)
         } else {
-            std::fs::write(out, &r.body)
+            (|| -> std::io::Result<()> {
+                let output = absolute_output_path(std::path::Path::new(out))?;
+                let assets = companion_asset_dir(&output)?;
+                site::write_embedded_assets(&assets)?;
+                let assets_url = site::file_url(&assets)?;
+                let source_dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+                let source_url = site::file_url(source_dir)?;
+                let mut html = String::from_utf8_lossy(&r.body).into_owned();
+                html = html.replace("<head>", &format!("<head><base href=\"{source_url}\">"));
+                // The page CSP blocks <base>; remove only that directive for the exported file.
+                html = html.replace("base-uri 'none'; ", "");
+                for asset in ["boot.js", "app.js", "katex/katex.min.css"] {
+                    let old = format!("/_a/{asset}");
+                    let new = format!("{assets_url}{asset}");
+                    html = html.replace(&old, &new);
+                }
+                std::fs::write(output, html)
+            })()
         };
         if let Err(e) = res {
             report("mdview", &format!("Cannot write {out}: {e}"));
@@ -121,5 +179,32 @@ fn main() {
         let _ = args.file;
         eprintln!("mdview's window needs Windows (WebView2). Use --dump-html <OUT> to render to a file.");
         std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir() -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("mdview_dump_test_{}_{}", std::process::id(), nonce))
+    }
+
+    #[test]
+    fn dump_output_refuses_to_overwrite_source() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("document.md");
+        std::fs::write(&source, "# keep me").unwrap();
+
+        assert!(dump_output_is_input(&source, &source).unwrap());
+        assert!(dump_output_is_input(&source, &dir.join(".").join("document.md")).unwrap());
+        assert!(!dump_output_is_input(&source, &dir.join("document.html")).unwrap());
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

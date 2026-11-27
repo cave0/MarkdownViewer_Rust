@@ -3,6 +3,14 @@
     'use strict';
     var body = document.body;
     var $ = function (id) { return document.getElementById(id); };
+    var assetScript = document.currentScript;
+    var assetBase = assetScript && assetScript.src
+        ? assetScript.src.slice(0, assetScript.src.lastIndexOf('/') + 1)
+        : '/_a/';
+    function assetUrl(src) {
+        return src.indexOf('/_a/') === 0 ? assetBase + src.slice(4) : src;
+    }
+
     var store = {
         get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
         set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -85,7 +93,7 @@
     on('theme-toggle-btn', function () { setNight(!body.classList.contains('night-mode')); });
     on('bgtheme-toggle-btn', function () { setBlack(!body.classList.contains('theme-black')); });
     on('fullscreen-toggle-btn', function () { ipc('fullscreen'); });
-    on('print-toggle-btn', function () { window.print(); });
+    on('print-toggle-btn', printPage);
     on('back-toggle-btn', function () { history.back(); });
     on('source-toggle-btn', function () {
         var s = !body.classList.contains('view-source');
@@ -148,15 +156,16 @@
     function loadScript(src) {
         if (!scriptCache[src]) scriptCache[src] = new Promise(function (res, rej) {
             var s = document.createElement('script');
-            s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s);
+            s.src = assetUrl(src); s.onload = res; s.onerror = rej; document.head.appendChild(s);
         });
         return scriptCache[src];
     }
     var pending = [];   // functions that force-render everything still queued (used for printing)
+    var lazyJobs = [];  // script-load and observer setup promises, awaited before printing
     function lazy(selector, src, init, render) {
         var els = Array.prototype.slice.call(document.querySelectorAll(selector));
         if (!els.length) return;
-        loadScript(src).then(function () {
+        var job = loadScript(src).then(function () {
             if (init) init();
             var todo = new Set(els);
             function run(el) { if (todo.delete(el)) { try { render(el); } catch (e) {} } }
@@ -169,6 +178,7 @@
             }, { root: host, rootMargin: '1200px 0px' });
             els.forEach(function (el) { io.observe(el); });
         }, function () {});
+        lazyJobs.push(job);
     }
 
     lazy('pre code[class*="language-"]', '/_a/hljs.min.js', null, function (code) {
@@ -192,10 +202,17 @@
         }
     });
     var mermaidQueue = Promise.resolve();
+    function showMermaidError(el) {
+        if (el.querySelector('.mermaid-error')) return;
+        var msg = document.createElement('div');
+        msg.className = 'mermaid-error';
+        msg.textContent = 'Diagram could not be rendered. The Mermaid source is preserved above.';
+        el.appendChild(msg);
+    }
     // Very wide diagrams keep a readable scale (75%, max 2400px) and scroll sideways instead of shrinking to fit.
     function decorateDiagram(el, src) {
         var svg = el.querySelector('svg');
-        if (!svg || el.querySelector('.dgm-tools')) return;
+        if (!svg || el.querySelector('.dgm-tools')) return false;
         el.__src = src;
         var vb = svg.viewBox && svg.viewBox.baseVal;
         // only diagrams that would shrink below ~60% get the sideways-scroll treatment; others still fit the page
@@ -208,6 +225,7 @@
             tools.appendChild(b);
         });
         el.appendChild(tools);
+        return true;
     }
     function svgText(svg) {
         var c = svg.cloneNode(true), vb = svg.viewBox.baseVal;
@@ -257,8 +275,25 @@
         var src = el.textContent;
         mermaidQueue = mermaidQueue.then(function () {
             return mermaid.run({ nodes: [el], suppressErrors: true });
-        }).then(function () { decorateDiagram(el, src); }).catch(function () {});
+        }).then(function () {
+            if (!decorateDiagram(el, src)) showMermaidError(el);
+        }).catch(function () { showMermaidError(el); });
     });
+    // The toolbar and Ctrl+P paths wait for lazy libraries and async Mermaid renders.
+    function printPage() {
+        Promise.all(lazyJobs).then(function () {
+            pending.forEach(function (f) { f(); });
+            return mermaidQueue;
+        }).then(function () {
+            return new Promise(function (resolve) {
+                requestAnimationFrame(function () { requestAnimationFrame(resolve); });
+            });
+        }).then(function () {
+            window.print();
+        });
+    }
+    onKey(function (e) { return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p'; }, printPage);
+    // Also render already-loaded items when printing is triggered by the WebView/system menu.
     window.addEventListener('beforeprint', function () { pending.forEach(function (f) { f(); }); });
 
     // ---- conversation turns (speaker headings / "**You:**" labels found by the renderer) ----------
@@ -398,7 +433,9 @@
         input.focus(); render();
         fetch('/_files', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { files = j; render(); }, function () { files = []; render(); });
     }
-    onKey(function (e) { return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e'; }, openQuick);
+    if (location.protocol !== 'file:') {
+        onKey(function (e) { return e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e'; }, openQuick);
+    }
 
     // ---- click an image to view it full size --------------------------------------------------
     document.addEventListener('click', function (e) {

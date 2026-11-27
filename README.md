@@ -38,11 +38,11 @@ Settings (night colors, theme, sidebar) persist in `%LOCALAPPDATA%\mdview`.
 
 ## Development on other platforms
 The window needs Windows, but the renderer is portable: `cargo test --locked` runs on Linux/macOS, and
-`mdview --dump-html out.html file.md` renders a document to a standalone page anywhere.
+`mdview --dump-html out.html file.md` writes an HTML file and a companion `out.html.assets/` directory containing its offline runtime. Relative images and links resolve against the original Markdown file's folder. Use `--dump-html -` to stream the HTML shell to stdout for a custom server.
 
 ## Tests
 * `cargo test --locked` - Rust unit tests (markdown, sanitizer, file server, embedded-asset regression checks).
-* `cd tests/ui && npm install && npx playwright install chromium && npm test` - headless-browser tests for
+* `cargo build --locked`, then `cd tests/ui && npm install && npx playwright install chromium && npm test` - headless-browser tests using the actual Rust-generated HTML for
   `assets/app.js` and `style.css` (diagram rendering and id collisions, wide-diagram scrolling, math copy, emoji,
   light theme, reading position). Set `CHROME_PATH` to use an existing Chromium.
-* CI runs all of the above, plus advisory `cargo fmt`, `clippy` and `cargo audit`.
+* CI runs all of the above; Clippy is a required check; rustfmt remains advisory pending a repository-wide formatting cleanup, and `cargo audit` is advisory.
