@@ -22,6 +22,7 @@ const IMG_TYPES: &[(&str, &str)] = &[
 const MAX_DOC_BYTES: u64 = 64 * 1024 * 1024;
 const CACHE_ENTRIES: usize = 8;
 const CACHE_BYTES: usize = 64 * 1024 * 1024;
+const FILE_URL_SEG: &AsciiSet = &CONTROLS.add(b' ').add(b'\"').add(b'#').add(b'?').add(b'%').add(b'<').add(b'>').add(b'{').add(b'}');
 const PATH_SEG: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'#').add(b'<').add(b'>').add(b'?').add(b'`')
     .add(b'{').add(b'}').add(b'%').add(b'/').add(b'\\');
 
@@ -55,7 +56,7 @@ pub struct Site {
 }
 
 pub fn is_md(p: &Path) -> bool {
-    p.extension().and_then(|e| e.to_str()).map_or(false, |e| MD_EXTS.iter().any(|m| e.eq_ignore_ascii_case(m)))
+    p.extension().and_then(|e| e.to_str()).is_some_and(|e| MD_EXTS.iter().any(|m| e.eq_ignore_ascii_case(m)))
 }
 
 pub fn file_sig(p: &Path) -> Option<Sig> {
@@ -267,6 +268,85 @@ fn asset_type(name: &str) -> &'static str {
     }
 }
 
+
+
+/// Convert an existing filesystem path to an absolute file:// URL.
+pub fn file_url(path: &Path) -> std::io::Result<String> {
+    let absolute = std::fs::canonicalize(path)?;
+    let mut raw = absolute.to_string_lossy().into_owned();
+    if cfg!(windows) { raw = raw.replace('\\', "/"); }
+    let encoded = raw
+        .split('/')
+        .map(|part| utf8_percent_encode(part, FILE_URL_SEG).to_string())
+        .collect::<Vec<_>>()
+        .join("/");
+    let mut url = if raw.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        format!("file:///{encoded}")
+    };
+    if !url.ends_with('/') {
+        url.push('/');
+    }
+    Ok(url)
+}
+
+/// Copy embedded runtime files beside an exported HTML document.
+/// Existing directories are reused only when they carry mdview's marker.
+pub fn write_embedded_assets(dir: &Path) -> std::io::Result<()> {
+    const MARKER: &str = "mdview embedded assets v1";
+    if dir.exists() {
+        let meta = std::fs::symlink_metadata(dir)?;
+        if !meta.file_type().is_dir() || meta.file_type().is_symlink() {
+            return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "asset path is not a normal directory"));
+        }
+        let marker = dir.join(".mdview-assets");
+        let marker_meta = std::fs::symlink_metadata(&marker);
+        if !matches!(marker_meta, Ok(m) if m.file_type().is_file() && !m.file_type().is_symlink())
+            || std::fs::read_to_string(&marker).ok().as_deref() != Some(MARKER)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("refusing to overwrite unmanaged asset directory {}", dir.display()),
+            ));
+        }
+    } else {
+        std::fs::create_dir(dir)?;
+    }
+
+    for (name, bytes) in embedded::ASSETS {
+        let rel = Path::new(name);
+        if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid embedded asset path"));
+        }
+        let target = dir.join(rel);
+        let parent = target.parent().expect("embedded asset has a parent");
+        std::fs::create_dir_all(parent)?;
+        if let Ok(meta) = std::fs::symlink_metadata(&target) {
+            if !meta.file_type().is_file() || meta.file_type().is_symlink() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!("refusing to overwrite non-file asset {}", target.display()),
+                ));
+            }
+        }
+        std::fs::write(target, bytes)?;
+    }
+    std::fs::write(dir.join(".mdview-assets"), MARKER)?;
+    Ok(())
+}
+
+/// Accept navigation only to mdview's exact internal origin. Deliberately rejects
+/// credentials, non-default ports, suffix domains and alternate schemes.
+pub fn is_internal_url(raw: &str) -> bool {
+    let Some((scheme, rest)) = raw.split_once("://") else { return false };
+    if !scheme.eq_ignore_ascii_case("http") {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    authority.eq_ignore_ascii_case("mdview.localhost")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +365,32 @@ mod tests {
     }
     fn rand_id() -> u128 {
         SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos()
+    }
+
+    #[test]
+    fn internal_navigation_requires_an_exact_origin() {
+        for allowed in [
+            "http://mdview.localhost/",
+            "http://MDVIEW.LOCALHOST/document.md",
+            "http://mdview.localhost?query=1",
+        ] {
+            assert!(is_internal_url(allowed), "{allowed}");
+        }
+        for rejected in [
+            "https://mdview.localhost/",
+            "http://mdview.localhost.evil.example/",
+            "http://evilmdview.localhost/",
+            "http://mdview.localhost@evil.example/",
+            "http://user@mdview.localhost/",
+            "http://mdview.localhost:8080/",
+            "http://mdview.localhost:80/",
+            "http://mdview.localhost./",
+            "http:\\mdview.localhost\\evil.example/",
+            "javascript:alert(1)",
+            "about:blank",
+        ] {
+            assert!(!is_internal_url(rejected), "{rejected}");
+        }
     }
 
     #[test]

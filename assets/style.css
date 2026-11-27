@@ -551,3 +551,12 @@ details.svg-source { margin: -.6em 0 1.2em; } details.svg-source > summary { col
 .qo-empty { color: var(--text-muted); cursor: default; }
 .qo-hint { padding: 6px 16px; border-top: 1px solid var(--border-muted); color: var(--text-muted); font-size: 11.5px; }
 @media print { .turn { background: none !important; } .turn-tools { display: none !important; } .turn.folded > :not(.turn-tools):not([data-role]) { display: revert !important; } .turn.folded::after, #quick-open { display: none !important; } }
+
+
+@media print {
+    /* Export the rendered document even when the on-screen raw-source toggle is active. */
+    body.view-source .markdown-container { display: block !important; }
+    body.view-source .raw-source-view { display: none !important; }
+}
+
+.mermaid-error { color: var(--text-muted); font-size: 13px; padding: 10px; text-align: center; }
