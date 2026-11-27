@@ -581,9 +581,23 @@
     body.appendChild(bar);
     var fin = bar.querySelector('input'), fb = bar.querySelectorAll('button');
     function find(back) {
-        if (!fin.value) return;
+        // window.find() can move focus from this input to the matched document text.
+        // Save and restore the input selection so incremental typing keeps working.
+        var start = fin.selectionStart;
+        var end = fin.selectionEnd;
+
+        if (!fin.value) {
+            bar.classList.remove('miss');
+            return;
+        }
+
         var ok = window.find(fin.value, false, !!back, true, false, false, false);
         bar.classList.toggle('miss', !ok);
+
+        fin.focus({ preventScroll: true });
+        if (start !== null && end !== null) {
+            fin.setSelectionRange(start, end);
+        }
     }
     function openFind() { bar.classList.add('open'); fin.focus(); fin.select(); }
     function closeFind() { bar.classList.remove('open', 'miss'); focusContent(); }
