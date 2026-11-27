@@ -1075,8 +1075,8 @@ mod tests {
     #[test]
     fn headings_get_unique_ids_and_toc() {
         let d = render("# A b\n## A b\n### `code` *em* x\n", SAFE);
-        assert!(d.body.contains("<h1 id=\"a-b\">"));
-        assert!(d.body.contains("<h2 id=\"a-b-1\">"));
+        assert!(d.body.contains("<h1 id=\"a-b\" data-md-start-line="));
+        assert!(d.body.contains("<h2 id=\"a-b-1\" data-md-start-line="));
         assert_eq!(d.toc[2].title, "code em x");
         assert_eq!(d.toc.len(), 3);
     }
@@ -1213,7 +1213,7 @@ mod tests {
         assert!(!d.body.contains("<ul>") && !d.body.contains("<ol>") && !d.body.contains("<h"), "{}", d.body);
         assert_eq!(d.body.matches("math-display").count(), 1, "{}", d.body);
         assert!(d.body.contains("\\tilde{\\mu} = \\mu^0 - RT + zF 1. # x"), "{}", d.body);
-        assert!(d.body.contains("<p>after</p>"));
+        assert!(d.body.contains("after</p>"));
     }
 
     #[test]
@@ -1229,7 +1229,7 @@ mod tests {
     fn display_math_in_lists_and_quotes_and_comments() {
         let d = render("1. item:\n   $$\n   a\n   =\n   b % note\n   $$\n2. two\n", SAFE);
         assert!(d.body.contains("a = b</span>"), "{}", d.body);
-        assert!(d.body.contains("<li>two</li>"), "{}", d.body);
+        assert!(d.body.contains("two</li>"), "{}", d.body);
         let q = render("> $$\n> x\n> -\n> y\n> $$\n", SAFE);
         assert!(q.body.contains("x - y"), "{}", q.body);
         assert!(!q.body.contains("<ul>"), "{}", q.body);
@@ -1402,7 +1402,7 @@ mod tests {
         assert!(d.toc.is_empty());
         assert_eq!(d.body.matches("math-display").count(), 2, "{}", d.body);
         assert!(d.body.contains("\\begin{align} a &amp;= b \\\\ -c &amp;= d \\end{align}"), "{}", d.body);
-        assert!(d.body.contains("<p>After</p>"));
+        assert!(d.body.contains("After</p>"));
     }
 
     #[test]
