@@ -1114,6 +1114,33 @@ mod tests {
     }
 
     #[test]
+    fn source_line_map_tracks_original_lines_after_display_and_inline_math() {
+        let display = "## Before\r\n\r\n$\r\nx^2\r\n=\r\ny^2\r\n$\r\n\r\n## After\r\n";
+        let processed = preprocess_math(display);
+        let after = processed.find("## After").unwrap();
+        let map = SourceLineMap::new(display, &processed).unwrap();
+        assert_eq!(map.line(after), 9);
+        let rendered = render(display, SAFE);
+        assert!(rendered.body.contains("id=\"after\" data-md-start-line=\"9\" data-md-end-line=\"9\""), "{}", rendered.body);
+
+        let inline = "Paragraph \\(\r\nx^2\r\n\\) continued.\r\n\r\n## After\r\n";
+        let processed = preprocess_math(inline);
+        let after = processed.find("## After").unwrap();
+        let map = SourceLineMap::new(inline, &processed).unwrap();
+        assert_eq!(map.line(after), 5);
+    }
+
+    #[test]
+    fn rendered_blocks_include_source_line_anchors() {
+        let src = "# Heading\n\nParagraph one.\n\n- first\n- second\n\n~~~rust\nfn main() {}\n~~~\n";
+        let d = render(src, SAFE);
+        assert!(d.body.contains("data-md-start-line=\"1\" data-md-end-line=\"1\""), "{}", d.body);
+        assert!(d.body.contains("<p data-md-start-line=\"3\" data-md-end-line=\"3\">"), "{}", d.body);
+        assert!(d.body.contains("<li data-md-start-line=\"5\">"), "{}", d.body);
+        assert!(d.body.contains("class=\"md-source-block\" data-md-start-line=\"8\""), "{}", d.body);
+    }
+
+    #[test]
     fn bracket_math_skips_code() {
         let s = "```\n\\(x\\)\n```\n`\\(y\\)` and \\(z\\)";
         let p = preprocess_math(s);
