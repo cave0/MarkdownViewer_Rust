@@ -79,6 +79,50 @@ const scrollAll = async (p) => {
 await scrollAll(page1);
 await page1.waitForTimeout(500);
 
+// ---- Find keeps focus and the caret while typing incrementally ----------------------------------------
+await page1.keyboard.press('Control+f');
+const findOpened = await page1.evaluate(() => {
+  const bar = document.getElementById('find-bar');
+  const input = bar && bar.querySelector('input');
+  return !!input && bar.classList.contains('open') && document.activeElement === input;
+});
+check('Ctrl+F opens Find with the input focused', findOpened);
+
+await page1.evaluate(() => {
+  const input = document.querySelector('#find-bar input');
+  input.__findFocusSamples = [];
+  // This listener runs after the application's input handler.
+  input.addEventListener('input', function () {
+    this.__findFocusSamples.push(document.activeElement === this);
+  });
+});
+await page1.keyboard.type('highlighted text', { delay: 15 });
+const findState = await page1.evaluate(() => {
+  const bar = document.getElementById('find-bar');
+  const input = bar.querySelector('input');
+  return {
+    value: input.value,
+    focused: document.activeElement === input,
+    caretAtEnd: input.selectionStart === input.value.length && input.selectionEnd === input.value.length,
+    focusSamples: input.__findFocusSamples,
+    missed: bar.classList.contains('miss'),
+    selectedText: window.getSelection().toString()
+  };
+});
+check('typing a multi-character query keeps focus after every character and preserves the caret',
+  findState.value === 'highlighted text' &&
+  findState.focused &&
+  findState.caretAtEnd &&
+  findState.focusSamples.length === 'highlighted text'.length &&
+  findState.focusSamples.every(Boolean),
+  JSON.stringify(findState));
+check('incremental Find selects the matching document text',
+  !findState.missed && findState.selectedText.toLowerCase() === 'highlighted text',
+  JSON.stringify(findState));
+await page1.keyboard.press('Escape');
+const findClosed = await page1.evaluate(() => !document.getElementById('find-bar').classList.contains('open'));
+check('Escape closes Find after incremental search', findClosed);
+
 // ---- file export bundles local assets and protects the source file ------------------------------------
 const exportRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mdview-export-'));
 const exportPath = path.join(exportRoot, 'fixture.html');
