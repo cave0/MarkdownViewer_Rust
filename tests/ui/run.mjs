@@ -100,8 +100,6 @@ check('file export rewrites runtime paths and preserves source-relative links',
 const protectedSource = spawnSync(binary, ['--dump-html', fixturePath, fixturePath], { encoding: 'utf8' });
 check('HTML export refuses to overwrite the Markdown source', protectedSource.status === 2 &&
   fs.readFileSync(fixturePath, 'utf8').startsWith('---'));
-fs.rmSync(exportRoot, { recursive: true, force: true });
-
 const standalonePage = await ctx.newPage();
 const standaloneErrors = [];
 standalonePage.on('pageerror', (e) => standaloneErrors.push(e.message));
@@ -117,6 +115,7 @@ check('exported HTML loads its offline KaTeX runtime', standaloneState.mathRende
 check('exported HTML loads its offline Mermaid runtime', standaloneState.diagramRendered, JSON.stringify(standaloneState));
 check('standalone file has no uncaught page errors', standaloneErrors.length === 0, standaloneErrors.join(' | '));
 await standalonePage.close();
+fs.rmSync(exportRoot, { recursive: true, force: true });
 
 
 // ---- actual Rust renderer integration ---------------------------------------------------------------
