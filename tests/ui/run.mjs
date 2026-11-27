@@ -2,6 +2,7 @@
 // Usage: npm ci && npx playwright install chromium && npm test   (set CHROME_PATH to use another Chromium)
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -77,6 +78,29 @@ const scrollAll = async (p) => {
 };
 await scrollAll(page1);
 await page1.waitForTimeout(500);
+
+// ---- file export bundles local assets and protects the source file ------------------------------------
+const exportRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mdview-export-'));
+const exportPath = path.join(exportRoot, 'fixture.html');
+const exportResult = spawnSync(binary, ['--dump-html', exportPath, fixturePath], {
+  encoding: 'utf8',
+  maxBuffer: 64 * 1024 * 1024
+});
+const exportAssets = exportPath + '.assets';
+const exportedHtml = fs.existsSync(exportPath) ? fs.readFileSync(exportPath, 'utf8') : '';
+check('file export writes a companion asset directory',
+  exportResult.status === 0 && fs.existsSync(path.join(exportAssets, 'app.js')) && fs.existsSync(path.join(exportAssets, 'mermaid.min.js')),
+  exportResult.stderr || String(exportResult.status));
+check('file export includes KaTeX and its fonts',
+  fs.existsSync(path.join(exportAssets, 'katex', 'katex.min.css')) &&
+  fs.existsSync(path.join(exportAssets, 'katex', 'fonts', 'KaTeX_Main-Regular.woff2')));
+check('file export rewrites runtime paths and preserves source-relative links',
+  exportedHtml.includes('file://') && exportedHtml.includes('.assets/app.js') && exportedHtml.includes('<base href="file://'),
+  exportedHtml.slice(0, 300));
+const protectedSource = spawnSync(binary, ['--dump-html', fixturePath, fixturePath], { encoding: 'utf8' });
+check('HTML export refuses to overwrite the Markdown source', protectedSource.status === 2 &&
+  fs.readFileSync(fixturePath, 'utf8').startsWith('---'));
+fs.rmSync(exportRoot, { recursive: true, force: true });
 
 // ---- actual Rust renderer integration ---------------------------------------------------------------
 const rendererPage = await page1.evaluate(() => {

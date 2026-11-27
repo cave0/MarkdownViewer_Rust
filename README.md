@@ -38,7 +38,7 @@ Settings (night colors, theme, sidebar) persist in `%LOCALAPPDATA%\mdview`.
 
 ## Development on other platforms
 The window needs Windows, but the renderer is portable: `cargo test --locked` runs on Linux/macOS, and
-`mdview --dump-html out.html file.md` writes the rendered HTML shell. It references the viewer assets at `/_a/`; serve those paths alongside the HTML to use the interactive features.
+`mdview --dump-html out.html file.md` writes an HTML file and a companion `out.html.assets/` directory containing its offline runtime. Relative images and links resolve against the original Markdown file's folder. Use `--dump-html -` to stream the HTML shell to stdout for a custom server.
 
 ## Tests
 * `cargo test --locked` - Rust unit tests (markdown, sanitizer, file server, embedded-asset regression checks).

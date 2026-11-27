@@ -146,31 +146,22 @@ fn main() {
             use std::io::Write;
             std::io::stdout().write_all(&r.body)
         } else {
-            let output = absolute_output_path(std::path::Path::new(out))?;
-            let assets = companion_asset_dir(&output)?;
-            if let Err(e) = site::write_embedded_assets(&assets) {
-                report("mdview", &format!("Cannot write companion assets {}: {e}", assets.display()));
-                std::process::exit(1);
-            }
-            let assets_url = match site::file_url(&assets) {
-                Ok(u) => u,
-                Err(e) => {
-                    report("mdview", &format!("Cannot resolve companion assets: {e}"));
-                    std::process::exit(1);
+            (|| -> std::io::Result<()> {
+                let output = absolute_output_path(std::path::Path::new(out))?;
+                let assets = companion_asset_dir(&output)?;
+                site::write_embedded_assets(&assets)?;
+                let assets_url = site::file_url(&assets)?;
+                let source_dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+                let source_url = site::file_url(source_dir)?;
+                let mut html = String::from_utf8_lossy(&r.body).into_owned();
+                html = html.replace("<head>", &format!("<head><base href=\\"{source_url}\\">"));
+                for asset in ["boot.js", "app.js", "katex/katex.min.css"] {
+                    let old = format!("/_a/{asset}");
+                    let new = format!("{assets_url}{asset}");
+                    html = html.replace(&old, &new);
                 }
-            };
-            let source_dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
-            let source_url = match site::file_url(source_dir) {
-                Ok(u) => u,
-                Err(e) => {
-                    report("mdview", &format!("Cannot resolve source directory: {e}"));
-                    std::process::exit(1);
-                }
-            };
-            let mut html = String::from_utf8_lossy(&r.body).into_owned();
-            html = html.replace("<head>", &format!("<head><base href=\\"{source_url}\\">"));
-            html = html.replace("/_a/", &assets_url);
-            std::fs::write(output, html)
+                std::fs::write(output, html)
+            })()
         };
         if let Err(e) = res {
             report("mdview", &format!("Cannot write {out}: {e}"));
